@@ -6676,7 +6676,7 @@ int app_main(int argc, char const* const* argv)
 #endif
     CONFIG_ReadSetup();
 
-#if defined(_WIN32) && !defined (EDUKE32_STANDALONE)
+#if 0 // no EDuke32 update check in Duke3D Chosen (the engine has no windowsCheckForUpdates)
     if (ud.config.CheckForUpdates == 1)
     {
         if (time(NULL) - ud.config.LastUpdateCheck > UPDATEINTERVAL)

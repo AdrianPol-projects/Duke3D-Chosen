@@ -486,7 +486,7 @@ ifneq (,$(APPBASENAME))
     duke3d_game := $(APPBASENAME)
 endif
 
-duke3d_game_proper := Duke3D Chosen
+duke3d_game_proper := Duke3D
 duke3d_editor_proper := Mapster32
 
 duke3d_common_editor_objs := \
