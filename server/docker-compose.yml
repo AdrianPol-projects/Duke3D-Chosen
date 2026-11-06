@@ -1,0 +1,25 @@
+# Duke3D Chosen online relay + live dashboard.
+# The key goes in server.env next to this file:  GAME_KEY=<your secret key>
+# Behind Cloudflare also put TRUST_PROXY=1 there (see README.md).
+services:
+  duke-relay:
+    build: .
+    image: duke-relay
+    container_name: duke-relay
+    restart: unless-stopped
+    env_file: server.env
+    ports:
+      - "127.0.0.1:8101:8080"
+    volumes:
+      - relay-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "3"}
+volumes:
+  relay-data:
