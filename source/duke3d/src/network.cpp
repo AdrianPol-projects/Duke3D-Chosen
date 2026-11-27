@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 /// NETCODE_DISABLE:    Remove pretty much all of the game's interaction with the code in this file.
 
 #include "duke3d.h"
+#include "chosen.h"
 #include "game.h"
 #include "gamedef.h"
 #include "network.h"
@@ -5050,6 +5051,9 @@ void Net_SendMessage(void)
                 else if (g_netClient)
                     enet_peer_send(g_netClientPeer, CHAN_CHAT, enet_packet_create(&tempbuf[0], j + 2, 0));
                 G_AddUserQuote(recbuf);
+                char line[128];
+                Bsnprintf(line, sizeof(line), "%s: %s", g_player[myconnectindex].user_name, typebuf);
+                chosenChatSent(line);
             }
             g_chatPlayer = -1;
             g_player[myconnectindex].ps->gm &= ~(MODE_TYPE | MODE_SENDTOWHOM);

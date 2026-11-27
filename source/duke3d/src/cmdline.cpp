@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "screens.h"
 #include "renderlayer.h"
 #include "cmdline.h"
+#include "chosen.h"
 
 int32_t g_commandSetup = 0;
 int32_t g_noSetup = 0;
@@ -264,6 +265,12 @@ void G_CheckCommandLine(int32_t argc, char const * const * argv)
                         i++;
                     }
                     i++;
+                    continue;
+                }
+                // Duke3D Chosen: online lobbies from the command line (shortcuts, tests)
+                if (chosenCommandLine(c+1, argc > i+1 ? argv[i+1] : NULL))
+                {
+                    i += chosenCommandLineTakesValue(c+1) && argc > i+1 ? 2 : 1;
                     continue;
                 }
                 if (!Bstrcasecmp(c+1, "gamegrp"))

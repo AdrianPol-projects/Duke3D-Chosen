@@ -10,7 +10,7 @@ Unzip, put your `DUKE3D.GRP` next to the game and start it. Any Duke Nukem 3D wo
 * **MULTIPLAYER** in the main menu:
   * **HOST LAN GAME**: pick the game type (DukeMatch, co-op, ...), episode, level and monsters, and play. Others can join at any time while you play.
   * **FIND LAN GAMES**: lists the games on your network; pick one to join. **JOIN BY ADDRESS** for anything else.
-  * **ONLINE**: enter your server's address and key, then **HOST A LOBBY** or **FIND LOBBIES**. No port forwarding: the game traffic goes through your own relay server ([SERVER.md](SERVER.md)).
+  * **ONLINE**: enter your server's address and key, then **HOST A LOBBY** or **FIND LOBBIES**. No port forwarding: the game traffic goes through a relay server: the public one, duke3d.pi-mole.com (leave SERVER empty), or your own ([SERVER.md](SERVER.md)). Lobbies can have a password.
   * **LEAVE GAME**, and QUIT TO TITLE now works in network games.
 * **Live dashboard** in the browser: lobbies, players' health, armor, weapons, keys, a live level map and an event list.
 * **Network game fix:** in EDuke32's current network code the clients never got the level (`Waiting for server` forever). Fixed, so LAN and online games work.
@@ -18,7 +18,7 @@ Unzip, put your `DUKE3D.GRP` next to the game and start it. Any Duke Nukem 3D wo
 * **Web version**: the whole game in Safari, Chrome, Edge or Firefox, installable as an app that works offline; your files stay in the browser.
 * **macOS** app for Apple Silicon and Intel, **Android** keeps everything in the `Duke3D` folder of the main storage, **iPad** in Files > On My iPad > Duke3D Chosen.
 
-Building: `.github/workflows/release.yml` (all platforms), `platform/Android`, `platform/iOS`, `platform/Web`; on Linux `make duke3d`. The relay server is in `server/` ([SERVER.md](SERVER.md)).
+Building: `.github/workflows/release.yml` (all platforms), `platform/Android`, `platform/iOS`, `platform/Web`; on Linux `make duke3d`. The relay server is NotBlood Chosen's `server/` with `SITE=duke3d` ([SERVER.md](SERVER.md)); the public one is duke3d.pi-mole.com.
 
 ## Acknowledgments
 

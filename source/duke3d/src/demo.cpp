@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "screens.h"
 
 #include "vfs.h"
+#include "chosen.h"
 
 char g_firstDemoFile[BMAX_PATH];
 
@@ -954,6 +955,7 @@ nextdemo_nomenu:
         // updating totalclock when profiling (both via sampletimer()):
         if (!Demo_IsProfiling())
             gameHandleEvents();
+        chosenCommandLineAction();  // Duke3D Chosen: -online-host / -online-join
 
         if (g_player[myconnectindex].ps->gm == MODE_GAME)
         {

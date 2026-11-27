@@ -1534,6 +1534,8 @@ static MenuString_t MEO_CHOSEN_KEY = MAKE_MENUSTRING( gOnlineKey, &MF_Bluefont, 
 static MenuEntry_t ME_CHOSEN_KEY = MAKE_MENUENTRY( "Key", &MF_Redfont, &MEF_ChosenOnline, &MEO_CHOSEN_KEY, String );
 static MenuString_t MEO_CHOSEN_LOBBY = MAKE_MENUSTRING( gOnlineLobby, &MF_Bluefont, sizeof(gOnlineLobby), 0 );
 static MenuEntry_t ME_CHOSEN_LOBBY = MAKE_MENUENTRY( "Lobby Name", &MF_Redfont, &MEF_ChosenOnline, &MEO_CHOSEN_LOBBY, String );
+static MenuString_t MEO_CHOSEN_PASSWORD = MAKE_MENUSTRING( gOnlineLobbyPassword, &MF_Bluefont, sizeof(gOnlineLobbyPassword), 0 );
+static MenuEntry_t ME_CHOSEN_PASSWORD = MAKE_MENUENTRY( "Lobby Password", &MF_Redfont, &MEF_ChosenOnline, &MEO_CHOSEN_PASSWORD, String );
 static MenuOption_t MEO_CHOSEN_REPORTLAN = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &gOnlineReportLan );
 static MenuEntry_t ME_CHOSEN_REPORTLAN = MAKE_MENUENTRY( "LAN on Dashboard", &MF_Redfont, &MEF_ChosenOnline, &MEO_CHOSEN_REPORTLAN, Option );
 static MenuLink_t MEO_CHOSEN_HOSTLOBBY = { MENU_NETOPTIONS, MA_Advance, };
@@ -1545,6 +1547,7 @@ static MenuEntry_t *MEL_CHOSEN_ONLINE[] = {
     &ME_CHOSEN_SERVER,
     &ME_CHOSEN_KEY,
     &ME_CHOSEN_LOBBY,
+    &ME_CHOSEN_PASSWORD,
     &ME_CHOSEN_REPORTLAN,
     &ME_CHOSEN_HOSTLOBBY,
     &ME_CHOSEN_FINDLOBBIES,

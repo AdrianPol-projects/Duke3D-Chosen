@@ -20,7 +20,13 @@ See the GNU General Public License for more details.
 #pragma once
 
 #define CHOSEN_NAME "Duke3D Chosen"
-#define CHOSEN_VERSION "1.0"
+#define CHOSEN_VERSION "1.1"
+
+// the public server MULTIPLAYER > ONLINE uses when SERVER is left empty (its page: live games and
+// the web version)
+#ifndef CHOSEN_PUBLIC_SERVER
+#define CHOSEN_PUBLIC_SERVER "duke3d.pi-mole.com"
+#endif
 
 enum
 {
@@ -33,12 +39,17 @@ enum
 extern char gOnlineServer[64];
 extern char gOnlineKey[48];
 extern char gOnlineLobby[25];
+extern char gOnlineLobbyPassword[25];  // a private lobby: players need the same password
 extern int32_t gOnlineReportLan;  // show hosted LAN games on the dashboard
 extern int gOnlineMode;
 
 // the version string players have to match ("Duke3D Chosen 1.0")
 const char *onlineVersion(void);
 const char *onlineStatusText(void);
+// the server to use: SERVER from the menu, else the public one
+const char *onlineServerAddress(void);
+// a chat line the player sent to everybody in a network game: the lobby (and the dashboard) gets it too
+void chosenChatSent(const char *pzText);
 void onlineSetStatus(const char *pzText);
 
 // ---- the MULTIPLAYER menu ----
@@ -64,6 +75,13 @@ int chosenListLobbies(CHOSENLISTENTRY *pList, int nMax);
 void chosenLanScanStart(void);
 int chosenLanScanPoll(CHOSENLISTENTRY *pList, int nMax);  // games found so far
 void chosenLanScanStop(void);
+
+// command line: -online-server ADDRESS, -online-key KEY, -online-password PW, -online-host [LOBBY],
+// -online-join LOBBY (hosts or joins once the main menu is up); true when the option was one of these
+bool chosenCommandLine(const char *pzOption, const char *pzValue);
+bool chosenCommandLineTakesValue(const char *pzOption);
+// once the main menu is up (the game loop and the title screen call it): host or join as asked
+void chosenCommandLineAction(void);
 
 // called every frame by the game loop: relay messages, LAN answers, stats for the dashboard
 void chosenFrame(void);

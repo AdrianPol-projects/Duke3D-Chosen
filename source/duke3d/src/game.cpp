@@ -6578,6 +6578,50 @@ static const char* dukeVerbosityCallback(loguru::Verbosity verbosity)
     }
 }
 
+#if !defined STARTUP_SETUP_WINDOW && defined RENDERTYPESDL && SDL_MAJOR_VERSION >= 2 && !defined NOTBLOOD_WEB
+static void G_ChooseGameDialog(int argc, char const * const * argv)
+{
+    // a game picked on the command line, or no questions wanted
+    static char const *const switches[] = { "-gamegrp", "-grp", "-nam", "-napalm", "-ww2gi", "-addon", "-nosetup" };
+    for (int i = 1; i < argc; i++)
+        for (char const *sw : switches)
+            if (!Bstrncasecmp(argv[i], sw, Bstrlen(sw)) || (argv[i][0] == '/' && !Bstrncasecmp(argv[i] + 1, sw + 1, Bstrlen(sw) - 1)))
+                return;
+
+    enum { kMaxChoices = 12 };
+    grpfile_t const *choices[kMaxChoices];
+    SDL_MessageBoxButtonData buttons[kMaxChoices];
+    int nCount = 0;
+
+    for (grpfile_t const *fg = foundgrps; fg && nCount < kMaxChoices; fg = fg->next)
+    {
+        if (!fg->type || !fg->type->name)
+            continue;
+        choices[nCount] = fg;
+        buttons[nCount].flags = fg == g_selectedGrp ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0;
+        buttons[nCount].buttonid = nCount;
+        buttons[nCount].text = fg->type->name;
+        nCount++;
+    }
+
+    if (nCount < 2)
+        return;
+
+    SDL_MessageBoxData const data =
+    {
+        SDL_MESSAGEBOX_INFORMATION, NULL, APPNAME,
+        "Which game do you want to play?\n\n(Start with -nosetup to skip this and play the last one.)",
+        nCount, buttons, NULL
+    };
+    int choice = -1;
+    if (SDL_ShowMessageBox(&data, &choice) == 0 && choice >= 0 && choice < nCount)
+    {
+        g_selectedGrp = choices[choice];
+        LOG_F(INFO, "Playing %s (%s).", g_selectedGrp->type->name, g_selectedGrp->filename);
+    }
+}
+#endif
+
 int app_main(int argc, char const* const* argv)
 {
 #ifdef _WIN32
@@ -6728,6 +6772,12 @@ int app_main(int argc, char const* const* argv)
         LOG_F(INFO, "Using config file '%s'.",g_setupFileName);
 
     G_ScanGroups();
+
+#if !defined STARTUP_SETUP_WINDOW && defined RENDERTYPESDL && SDL_MAJOR_VERSION >= 2 && !defined NOTBLOOD_WEB
+    // No startup window (Linux builds without GTK, Android, iPad): with more than one game installed
+    // (Duke Nukem 3D, its add-ons, NAM, WWII GI), ask which one to play.
+    G_ChooseGameDialog(argc, argv);
+#endif
 
 #ifdef STARTUP_SETUP_WINDOW
     if (g_commandSetup || (!Bgetenv("SteamTenfoot") && (readSetup < 0 || (!g_noSetup && (ud.configversion != BYTEVERSION_EDUKE32 || ud.setup.forcesetup)))))
