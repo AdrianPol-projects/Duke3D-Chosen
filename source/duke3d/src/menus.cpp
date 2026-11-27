@@ -1485,6 +1485,13 @@ static MenuOption_t MEO_NETOPTIONS_MAPEXITS = MAKE_MENUOPTION( &MF_Bluefont, &ME
 static MenuEntry_t ME_NETOPTIONS_MAPEXITS = MAKE_MENUENTRY( "Map Exits", &MF_Redfont, &MEF_NetSetup, &MEO_NETOPTIONS_MAPEXITS, Option );
 static MenuOption_t MEO_NETOPTIONS_FRFIRE = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &ud.m_ffire );
 static MenuEntry_t ME_NETOPTIONS_FRFIRE = MAKE_MENUENTRY( "Fr. Fire", &MF_Redfont, &MEF_NetSetup, &MEO_NETOPTIONS_FRFIRE, Option );
+// Duke3D Chosen: bots in the hosted game (LAN, online)
+static MenuRangeInt32_t MEO_NETOPTIONS_BOTS = MAKE_MENURANGE( &gBotNetCount, &MF_Bluefont, 0, kBotMaxBots, 0, kBotMaxBots+1, DisplayTypeInteger );
+static MenuEntry_t ME_NETOPTIONS_BOTS = MAKE_MENUENTRY( "Bots", &MF_Redfont, &MEF_NetSetup, &MEO_NETOPTIONS_BOTS, RangeInt32 );
+static char const *MEOSN_NETOPTIONS_BOTSKILL[] = { "Easy", "Normal", "Hard", "Insane", };
+static MenuOptionSet_t MEOS_NETOPTIONS_BOTSKILL = MAKE_MENUOPTIONSET( MEOSN_NETOPTIONS_BOTSKILL, NULL, 0x3 );
+static MenuOption_t MEO_NETOPTIONS_BOTSKILL = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_NETOPTIONS_BOTSKILL, &gBotSkill );
+static MenuEntry_t ME_NETOPTIONS_BOTSKILL = MAKE_MENUENTRY( "Bot Skill", &MF_Redfont, &MEF_NetSetup, &MEO_NETOPTIONS_BOTSKILL, Option );
 static MenuEntry_t ME_NETOPTIONS_ACCEPT = MAKE_MENUENTRY( "Accept", &MF_Redfont, &MEF_NetSetup_Confirm, &MEO_NETWORK_HOSTGAME, Link );
 
 static MenuEntry_t *MEL_NETOPTIONS[] = {
@@ -1494,6 +1501,8 @@ static MenuEntry_t *MEL_NETOPTIONS[] = {
     &ME_NETOPTIONS_MONSTERS,
     &ME_NETOPTIONS_MARKERS,
     &ME_NETOPTIONS_MAPEXITS,
+    &ME_NETOPTIONS_BOTS,
+    &ME_NETOPTIONS_BOTSKILL,
     &ME_NETOPTIONS_ACCEPT,
 };
 
@@ -2959,6 +2968,9 @@ static void Menu_Pre(MenuID_t cm)
     case MENU_NETOPTIONS:
         // Accept: host a new game from MULTIPLAYER, or the host's next level in a running game
         ME_NETOPTIONS_ACCEPT.entry = (g_netServer || g_netClient) ? &MEO_NETWORK_HOSTGAME : &MEO_NULL;
+        // the bots of a hosted game (a bot match has its own count; a running game keeps its bots)
+        MenuEntry_HideOnCondition(&ME_NETOPTIONS_BOTS, s_chosenHostBots || g_netServer || g_netClient);
+        MenuEntry_HideOnCondition(&ME_NETOPTIONS_BOTSKILL, s_chosenHostBots || g_netServer || g_netClient);
         if (MEOSV_NetEpisodes[MEO_NETOPTIONS_EPISODE.currentOption] == MAXVOLUMES)
             MEL_NETOPTIONS[2] = &ME_NETOPTIONS_USERMAP;
         else

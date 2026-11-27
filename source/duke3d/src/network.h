@@ -249,6 +249,11 @@ void    Net_GetPackets(void);
 #ifndef NETCODE_DISABLE
 
 void    Net_SendClientInfo(void);
+// Duke3D Chosen: bots in network games (the host plays them)
+int32_t Net_AddBot(char const *pzName, int32_t nColor, int32_t nTeam);
+void    Net_SendBotInfo(int32_t botIndex);
+void    Net_RemoveBot(int32_t botIndex);
+void    Net_BroadcastQuote(char const *pzText);
 
 void    Net_SendUserMapName(void);
 

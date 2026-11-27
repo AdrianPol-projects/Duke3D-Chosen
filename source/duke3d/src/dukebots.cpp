@@ -27,6 +27,7 @@ See the GNU General Public License for more details.
 
 #define NORMALKEYMOVE 40  // as in player.cpp: walking speed of a key press
 
+int32_t gBotNetCount;
 int32_t gBotCount = 3;
 int32_t gBotSkill = 1;
 int32_t gBotMode = kBotModeDukeMatch;
@@ -34,6 +35,8 @@ int32_t gBotMode = kBotModeDukeMatch;
 namespace {
 
 bool bActive;
+bool isBot[MAXPLAYERS];  // the player slots the bots play (a bot match: all after you; a network game: the host's bots)
+int nNetBots;            // bots in the network game this machine hosts
 
 // ---- difficulty -------------------------------------------------------------------------------
 
@@ -569,6 +572,7 @@ bool ModeActive(int nWhich)
 void Announce(const char *pzText)
 {
     G_AddUserQuote(pzText);
+    Net_BroadcastQuote(pzText);  // a network game: everybody sees it
     LOG_F(INFO, "Bot match: %s", pzText);
 }
 
@@ -677,7 +681,7 @@ void ModeTick(void)
                     nLead = p;
             char buffer[96];
             Bsnprintf(buffer, sizeof(buffer), "Hill: %s leads with %d of %d", g_player[nLead].user_name, hillPoints[nLead], kHillWin);
-            G_AddUserQuote(buffer);
+            G_AddUserQuote(buffer), Net_BroadcastQuote(buffer);
         }
     }
     else if (nMode == kBotModeLastMan)
@@ -1140,12 +1144,22 @@ void BotThink(int nBot)
 
 bool botMatchActive(void)
 {
-    return bActive;
+    return bActive || (g_netServer && nNetBots > 0);
 }
 
 bool botIsBot(int nPlayer)
 {
-    return bActive && nPlayer > 0 && nPlayer < ud.multimode;
+    return (unsigned)nPlayer < MAXPLAYERS && isBot[nPlayer] && g_player[nPlayer].ps && (bActive || g_netServer);
+}
+
+bool botNetGameHasBots(void)
+{
+    return g_netServer && nNetBots > 0;
+}
+
+int botNetCount(void)
+{
+    return g_netServer ? nNetBots : 0;
 }
 
 const char *botModeName(int nMode)
@@ -1155,7 +1169,7 @@ const char *botModeName(int nMode)
 
 void botOnDeath(int nPlayer, int nKiller)
 {
-    if (!bActive || CoopGame())
+    if (!botMatchActive() || CoopGame())
         return;
     if (nMode == kBotModeLastMan && lives[nPlayer] > 0)
     {
@@ -1165,7 +1179,7 @@ void botOnDeath(int nPlayer, int nKiller)
             Bsnprintf(buffer, sizeof(buffer), "%s is out", g_player[nPlayer].user_name);
         else
             Bsnprintf(buffer, sizeof(buffer), "%s has %d %s left", g_player[nPlayer].user_name, lives[nPlayer], lives[nPlayer] == 1 ? "life" : "lives");
-        G_AddUserQuote(buffer);
+        G_AddUserQuote(buffer), Net_BroadcastQuote(buffer);
     }
     if (nMode == kBotModeGunGame && nKiller >= 0 && nKiller != nPlayer)
     {
@@ -1196,7 +1210,7 @@ const char *botSkillName(int nSkill)
 
 void botLevelStart(void)
 {
-    if (!bActive)
+    if (!botMatchActive())
         return;
     LearnLevel();
     nItemsScanned = -1000;
@@ -1220,6 +1234,10 @@ static void SetupPlayers(int nBots)
 {
     nBots = clamp(nBots, 1, kBotMaxBots);
     bActive = true;
+    nNetBots = 0;
+    Bmemset(isBot, 0, sizeof(isBot));
+    for (int i = 1; i <= nBots; i++)
+        isBot[i] = true;
     ud.multimode = 1 + nBots;
     g_fakeMultiMode = ud.multimode;
     g_mostConcurrentPlayers = ud.multimode;
@@ -1279,9 +1297,14 @@ void botStartMatch(void)
 
 void botEndMatch(void)
 {
+    nNetBots = 0;
     if (!bActive)
+    {
+        Bmemset(isBot, 0, sizeof(isBot));
         return;
+    }
     bActive = false;
+    Bmemset(isBot, 0, sizeof(isBot));
     ud.multimode = 1;
     g_fakeMultiMode = 0;
     g_mostConcurrentPlayers = 1;
@@ -1290,7 +1313,7 @@ void botEndMatch(void)
 
 void botThinkAll(void)
 {
-    if (!bActive || numsectors <= 0)
+    if (!botMatchActive() || numsectors <= 0 || !(g_player[myconnectindex].ps->gm & MODE_GAME))
         return;
     nTic++;
     int const nId = numsectors * 7919 + numwalls;
@@ -1311,8 +1334,9 @@ void botThinkAll(void)
     }
     if (nTic - nItemsScanned > 90)
         ScanItems();
-    for (int i = 1; i < ud.multimode; i++)
-        BotThink(i);
+    for (int TRAVERSE_CONNECT(i))
+        if (isBot[i])
+            BotThink(i);
     ModeTick();
 
     // DUKE3D_BOT_SAVETEST=1: saves at 10 s, drops the bots, loads the save at 12 s (a test of saved bot games)
@@ -1335,8 +1359,10 @@ void botThinkAll(void)
     // DUKE3D_BOT_DEBUG=1: what every bot does, every 5 seconds
     static int const bDebug = getenv("DUKE3D_BOT_DEBUG") ? 1 : 0;
     if (bDebug && nTic % 150 == 0)
-        for (int i = 1; i < ud.multimode; i++)
+        for (int TRAVERSE_CONNECT(i))
         {
+            if (!isBot[i])
+                continue;
             auto *ps = PlayerOf(i);
             BOT *pBot = &bots[i];
             LOG_F(INFO, "bot %d %s: sect %d hp %d weapon %d goal %d | tics: fight %d seen %d walk %d dead %d; path fails %d, stuck %d, firing %d, damage %d",
@@ -1372,4 +1398,52 @@ void botThinkAll(void)
             LOG_F(INFO, "%s", buffer);
         }
     }
+}
+
+// ---- bots in network games: the host plays them as players without a connection ----
+
+void botNetHostStart(void)
+{
+    if (!g_netServer)
+        return;
+    int const nWanted = clamp(gBotNetCount, 0, kBotMaxBots);
+    int nName = (int)(timerGetTicks() / 7) % ARRAY_SIZE(kBotNames);
+    for (int b = 0; b < nWanted; b++)
+    {
+        int const nTeam = (numplayers + b) & 1;
+        int const nIndex = Net_AddBot(kBotNames[(nName + b) % ARRAY_SIZE(kBotNames)], 9 + ((numplayers + b) % 8), nTeam);
+        if (nIndex < 0)
+            break;
+        isBot[nIndex] = true;
+        nNetBots++;
+        Bmemset(&inputfifo[0][nIndex], 0, sizeof(input_t));
+    }
+    nMode = clamp(gBotMode, 0, kBotModeMax - 1);
+    nLevelId = -1;
+    LOG_F(INFO, "Network game: %d bots (%s), %s", nNetBots, botSkillName(gBotSkill), botModeName(nMode));
+}
+
+void botNetPlayerJoined(void)
+{
+    if (!g_netServer)
+        return;
+    for (int TRAVERSE_CONNECT(i))
+        if (isBot[i])
+            Net_SendBotInfo(i);
+}
+
+// a bot's slot is wanted by a joining player when the game is full: the bot leaves
+bool botNetMakeRoom(void)
+{
+    if (!g_netServer || nNetBots <= 0)
+        return false;
+    for (int i = MAXPLAYERS - 1; i > 0; i--)
+        if (isBot[i] && g_player[i].playerquitflag)
+        {
+            isBot[i] = false;
+            nNetBots--;
+            Net_RemoveBot(i);
+            return true;
+        }
+    return false;
 }

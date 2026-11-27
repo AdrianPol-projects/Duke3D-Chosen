@@ -35,6 +35,7 @@ enum
 extern int32_t gBotCount;   // PLAY WITH BOTS: how many bots
 extern int32_t gBotMode;    // kBotMode...
 extern int32_t gBotSkill;   // 0..kBotSkillMax-1
+extern int32_t gBotNetCount;  // bots in a hosted network game (LAN or online)
 
 // a bot match is running (the players after the first are bots)
 bool botMatchActive(void);
@@ -57,3 +58,13 @@ const char *botModeName(int nMode);
 
 // a player died in a bot match (nKiller: the player who killed them, -1: anything else)
 void botOnDeath(int nPlayer, int nKiller);
+
+// network games (LAN, online lobbies): the host adds gBotNetCount bots as players without a connection
+// and plays them; every machine sees them as players (the scores, the website's live view)
+void botNetHostStart(void);
+// a player joined: they learn the bots' names
+void botNetPlayerJoined(void);
+// the game is full and a player wants in: a bot leaves (false: no bots)
+bool botNetMakeRoom(void);
+bool botNetGameHasBots(void);
+int botNetCount(void);

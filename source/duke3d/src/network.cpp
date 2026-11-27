@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "duke3d.h"
 #include "chosen.h"
+#include "dukebots.h"
 #include "game.h"
 #include "gamedef.h"
 #include "network.h"
@@ -1519,6 +1520,8 @@ static void Net_SyncPlayer(ENetEvent *event)
     int32_t newPlayerIndex, j;
 
     if (numplayers + g_netPlayersWaiting >= MAXPLAYERS)
+        botNetMakeRoom();  // Duke3D Chosen: players come before bots
+    if (numplayers + g_netPlayersWaiting >= MAXPLAYERS)
     {
         enet_peer_disconnect_later(event->peer, DISC_SERVER_FULL);
         LOG_F(INFO, "Refused peer; server full.");
@@ -1568,6 +1571,7 @@ static void Net_SyncPlayer(ENetEvent *event)
     Net_SendClientInfo();
     Net_SendUserMapName();
     Net_SendNewGame(0, event->peer); // newly connecting player (Net_SyncPlayer)
+    botNetPlayerJoined();  // Duke3D Chosen: the newcomer learns the bots' names
 }
 
 
@@ -1765,6 +1769,97 @@ static void Net_Server_SetupPlayer(int playerindex)
 
     P_ResetPlayer(playerindex);
     Net_SpawnPlayer(playerindex);
+}
+
+// ---- Duke3D Chosen: bots in network games (the host plays them; dukebots.cpp) ----
+
+// tells everybody a bot's name, color and team (like a joining player's PACKET_CLIENT_INFO)
+void Net_SendBotInfo(int32_t botIndex)
+{
+    if (!g_netServer || (unsigned)botIndex >= MAXPLAYERS || !g_player[botIndex].ps)
+        return;
+    int32_t l = 0;
+    tempnetbuf[l++] = PACKET_CLIENT_INFO;
+    for (int i = 0; g_player[botIndex].user_name[i] && i < 31; i++)
+        tempnetbuf[l++] = g_player[botIndex].user_name[i];
+    tempnetbuf[l++] = 0;
+    tempnetbuf[l++] = g_player[botIndex].ps->aim_mode;
+    tempnetbuf[l++] = g_player[botIndex].ps->auto_aim;
+    tempnetbuf[l++] = g_player[botIndex].ps->weaponswitch;
+    tempnetbuf[l++] = g_player[botIndex].pcolor;
+    tempnetbuf[l++] = g_player[botIndex].pteam;
+    for (int i = 0; i < 10; i++)
+        tempnetbuf[l++] = (uint8_t)g_player[0].wchoice[i];
+    tempnetbuf[l++] = botIndex;
+    enet_host_broadcast(g_netServer, CHAN_GAMESTATE, enet_packet_create(&tempnetbuf[0], l, ENET_PACKET_FLAG_RELIABLE));
+}
+
+// a new player slot for a bot on the host: like a joining player without a connection (the host
+// fills in its input). -1 when the game is full.
+int32_t Net_AddBot(char const *pzName, int32_t nColor, int32_t nTeam)
+{
+    if (!g_netServer || numplayers + g_netPlayersWaiting >= MAXPLAYERS)
+        return -1;
+    int32_t newPlayerIndex;
+    for (TRAVERSE_CONNECT(newPlayerIndex))
+        if (g_player[newPlayerIndex].playerquitflag == 0)
+            break;
+    if (newPlayerIndex == -1)
+        newPlayerIndex = g_mostConcurrentPlayers++;
+    g_player[newPlayerIndex].netsynctime = (int32_t) totalclock;
+    g_player[newPlayerIndex].playerquitflag = 1;
+    for (int32_t j = 0; j < g_mostConcurrentPlayers - 1; j++)
+        connectpoint2[j] = j + 1;
+    connectpoint2[g_mostConcurrentPlayers - 1] = -1;
+    G_MaybeAllocPlayer(newPlayerIndex);
+    ++numplayers;
+    ++ud.multimode;
+    Bstrncpyz(g_player[newPlayerIndex].user_name, pzName, sizeof(g_player[newPlayerIndex].user_name));
+    g_player[newPlayerIndex].pcolor = nColor;
+    g_player[newPlayerIndex].pteam = nTeam;
+    Net_SendNewPlayer(newPlayerIndex);
+    // in a running level it gets a body right away (players joining later get it at the level start)
+    if (g_player[myconnectindex].ps->gm & MODE_GAME)
+    {
+        Net_Server_SetupPlayer(newPlayerIndex);
+        g_player[newPlayerIndex].ps->palookup = nColor;
+        g_player[newPlayerIndex].ps->team = nTeam;
+        g_player[newPlayerIndex].ps->auto_aim = 1;
+    }
+    Net_SendBotInfo(newPlayerIndex);
+    return newPlayerIndex;
+}
+
+// a line for everybody's screen (the host's match announcements)
+void Net_BroadcastQuote(char const *pzText)
+{
+    if (!g_netServer || !pzText)
+        return;
+    int32_t const n = min<int32_t>(Bstrlen(pzText), 200);
+    tempnetbuf[0] = PACKET_MESSAGE;
+    tempnetbuf[1] = 255;
+    Bmemcpy(&tempnetbuf[2], pzText, n);
+    tempnetbuf[2 + n] = 0;
+    enet_host_broadcast(g_netServer, CHAN_CHAT, enet_packet_create(&tempnetbuf[0], n + 3, ENET_PACKET_FLAG_RELIABLE));
+}
+
+// a bot leaves (to make room for a player): like a player disconnecting
+void Net_RemoveBot(int32_t botIndex)
+{
+    if (!g_netServer || (unsigned)botIndex >= MAXPLAYERS || !g_player[botIndex].playerquitflag)
+        return;
+    numplayers--;
+    ud.multimode--;
+    P_RemovePlayer(botIndex);
+    g_player[botIndex].revision = cInitialMapStateRevisionNumber;
+    packbuf[0] = PACKET_PLAYER_DISCONNECTED;
+    packbuf[1] = botIndex;
+    packbuf[2] = numplayers;
+    packbuf[3] = ud.multimode;
+    packbuf[4] = g_mostConcurrentPlayers;
+    packbuf[5] = myconnectindex;
+    enet_host_broadcast(g_netServer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], 6, ENET_PACKET_FLAG_RELIABLE));
+    LOG_F(INFO, "%s (bot) left to make room.", g_player[botIndex].user_name);
 }
 
 static void Net_ReceiveChallenge(uint8_t *pbuf, int32_t packbufleng, ENetEvent *event)

@@ -345,6 +345,7 @@ bool chosenHostGame(bool bOnline)
     Net_FillNewGame(&pendingnewgame, 1);
     Net_StartNewGame();
     Net_SendNewGame(1, NULL);
+    botNetHostStart();  // the bots of the game options (players without a connection, played here)
     return true;
 }
 
@@ -809,6 +810,12 @@ void chosenFrame(void)
         bReportSent = true;  // "hosted" or "error" follows
         return;
     }
+    static int nBotsSent = -1;
+    if ((gOnlineMode == kOnlineHost || (gOnlineMode == kOnlineReport && bReportSent)) && g_netServer && nBotsSent != botNetCount())
+    {
+        nBotsSent = botNetCount();  // the lobby list counts them apart from the people
+        relaySendText(("bots\t" + std::to_string(nBotsSent)).c_str());
+    }
     if (gOnlineMode == kOnlineClient || !(g_player[myconnectindex].ps->gm & MODE_GAME))
         return;
 
@@ -871,6 +878,12 @@ bool chosenCommandLine(const char *pzOption, const char *pzValue)
         if (pzValue)
             gBotCount = clamp(atoi(pzValue), 1, kBotMaxBots);
         nCommandLineAction = 3;
+        return true;
+    }
+    if (!Bstrcasecmp(pzOption, "host-bots"))  // bots in the network game this machine hosts (with -online-host)
+    {
+        if (pzValue)
+            gBotNetCount = clamp(atoi(pzValue), 0, kBotMaxBots);
         return true;
     }
     if (!Bstrcasecmp(pzOption, "bot-mode"))  // 0 DukeMatch, 1 Gun Game, 2 King of the Hill, 3 Last Man Standing

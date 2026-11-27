@@ -9,6 +9,7 @@ Unzip, put your `DUKE3D.GRP` next to the game and start it. Any Duke Nukem 3D wo
 **What Duke3D Chosen adds to EDuke32**
 * **MULTIPLAYER** in the main menu:
   * **PLAY WITH BOTS**: up to 7 computer players (4 difficulties) in DukeMatch, Team DukeMatch or co-op, offline.
+  * **Bots in network games**: a host's game options have *Bots* and *Bot Skill*; the host plays the bots, so LAN games, online lobbies (public or with the server key) can mix people and bots. Everybody sees them as players, the lobby list counts them, and they show on the website's live view. A player who wants into a full game takes a bot's place. Command line: `-host-bots N` with `-online-host`.
   * **HOST LAN GAME**: pick the game type (DukeMatch, co-op, ...), episode, level and monsters, and play. Others can join at any time while you play.
   * **FIND LAN GAMES**: lists the games on your network; pick one to join. **JOIN BY ADDRESS** for anything else.
   * **ONLINE**: enter your server's address and key, then **HOST A LOBBY** or **FIND LOBBIES**. No port forwarding: the game traffic goes through a relay server: the public one, duke3d.pi-mole.com (leave SERVER empty), or your own ([SERVER.md](SERVER.md)). Lobbies can have a password.
