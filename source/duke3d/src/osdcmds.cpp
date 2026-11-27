@@ -1597,6 +1597,7 @@ int32_t registerosdcommands(void)
         { "net_server", "online server address (host or host:port) for MULTIPLAYER > ONLINE", (void *)gOnlineServer, CVAR_STRING, 0, sizeof(gOnlineServer) },
         { "net_key", "server key for MULTIPLAYER > ONLINE", (void *)gOnlineKey, CVAR_STRING, 0, sizeof(gOnlineKey) },
         { "net_lobby", "name of the lobby you host (empty: your player name)", (void *)gOnlineLobby, CVAR_STRING, 0, sizeof(gOnlineLobby) },
+        { "net_joinpolicy", "joining a game you host while it runs: 0 anyone, 1 ask you (Y/N), 2 nobody", (void *)&gOnlineJoinPolicy, CVAR_INT, 0, 2 },
         { "net_reportlan", "show the LAN games you host on the online server's dashboard", (void *)&gOnlineReportLan, CVAR_BOOL, 0, 1 },
 
         { "crosshair", "display crosshair" CVAR_BOOL_OPTSTR, (void *)&ud.crosshair, CVAR_BOOL, 0, 1 },

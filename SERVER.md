@@ -5,7 +5,8 @@ the **relay**, which forwards their network traffic, shows the running games liv
 and serves **the game for web browsers** at `/play/`.
 
 **Public server: duke3d.pi-mole.com.** The game uses it when SERVER is left empty in MULTIPLAYER > ONLINE.
-Anybody can host and join there (lobbies can have a password); open https://duke3d.pi-mole.com to watch
+Anybody can host and join there (lobbies can have a password). To keep the server fast it runs a
+limited number of public games at a time; whoever has its key can always host. open https://duke3d.pi-mole.com to watch
 the games or play in the browser.
 
 ## Your own server

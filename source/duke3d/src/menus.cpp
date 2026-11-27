@@ -1536,6 +1536,10 @@ static MenuString_t MEO_CHOSEN_LOBBY = MAKE_MENUSTRING( gOnlineLobby, &MF_Bluefo
 static MenuEntry_t ME_CHOSEN_LOBBY = MAKE_MENUENTRY( "Lobby Name", &MF_Redfont, &MEF_ChosenOnline, &MEO_CHOSEN_LOBBY, String );
 static MenuString_t MEO_CHOSEN_PASSWORD = MAKE_MENUSTRING( gOnlineLobbyPassword, &MF_Bluefont, sizeof(gOnlineLobbyPassword), 0 );
 static MenuEntry_t ME_CHOSEN_PASSWORD = MAKE_MENUENTRY( "Lobby Password", &MF_Redfont, &MEF_ChosenOnline, &MEO_CHOSEN_PASSWORD, String );
+static char const *MEOSN_CHOSEN_JOINPOLICY[] = { "Anyone", "Ask Me", "Nobody", };
+static MenuOptionSet_t MEOS_CHOSEN_JOINPOLICY = MAKE_MENUOPTIONSET( MEOSN_CHOSEN_JOINPOLICY, NULL, 0x3 );
+static MenuOption_t MEO_CHOSEN_JOINPOLICY = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_CHOSEN_JOINPOLICY, &gOnlineJoinPolicy );
+static MenuEntry_t ME_CHOSEN_JOINPOLICY = MAKE_MENUENTRY( "Join During Game", &MF_Redfont, &MEF_ChosenOnline, &MEO_CHOSEN_JOINPOLICY, Option );
 static MenuOption_t MEO_CHOSEN_REPORTLAN = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &gOnlineReportLan );
 static MenuEntry_t ME_CHOSEN_REPORTLAN = MAKE_MENUENTRY( "LAN on Dashboard", &MF_Redfont, &MEF_ChosenOnline, &MEO_CHOSEN_REPORTLAN, Option );
 static MenuLink_t MEO_CHOSEN_HOSTLOBBY = { MENU_NETOPTIONS, MA_Advance, };
@@ -1548,6 +1552,7 @@ static MenuEntry_t *MEL_CHOSEN_ONLINE[] = {
     &ME_CHOSEN_KEY,
     &ME_CHOSEN_LOBBY,
     &ME_CHOSEN_PASSWORD,
+    &ME_CHOSEN_JOINPOLICY,
     &ME_CHOSEN_REPORTLAN,
     &ME_CHOSEN_HOSTLOBBY,
     &ME_CHOSEN_FINDLOBBIES,

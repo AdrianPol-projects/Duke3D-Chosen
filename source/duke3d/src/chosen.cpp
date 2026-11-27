@@ -32,6 +32,15 @@ char gOnlineKey[48];
 char gOnlineLobby[25];
 char gOnlineLobbyPassword[25];
 int32_t gOnlineReportLan;
+int32_t gOnlineJoinPolicy;
+
+static const char *const kJoinPolicies[] = { "open", "ask", "closed" };
+static int nPolicySent = -1;
+// players asking to join while the game runs (join_request), oldest first
+struct JOINREQUEST { int nId; char szName[17]; };
+static JOINREQUEST joinRequests[8];
+static int nJoinRequests;
+static uint32_t nNextJoinQuote;
 int gOnlineMode;
 
 static char zStatus[128];
@@ -186,7 +195,7 @@ static bool onlineReply(const char *pzText, char *pReply, int nSize, const char 
         while (relayReadText(pReply, nSize))
         {
             std::string cmd = msgField(pReply, 0);
-            if (cmd == pzWant || cmd == "error")
+            if (cmd == pzWant || cmd == "error" || cmd == "join_wait")
                 return true;
         }
         return false;
@@ -212,7 +221,8 @@ static bool onlineHostLobby(void)
         return false;
     lobbyNameFor(zLobbyName, sizeof(zLobbyName));
     std::string cmd = std::string("host\t") + zLobbyName + "\t" + std::to_string(MAXPLAYERS) + "\t" + cleanField(playerName()) +
-        "\t" + cleanField(modName()) + "\t" + onlineVersion() + "\t" + passwordHash();
+        "\t" + cleanField(modName()) + "\t" + onlineVersion() + "\t" + passwordHash() + "\t" +
+        kJoinPolicies[clamp(gOnlineJoinPolicy, 0, 2)];
     relaySendText(cmd.c_str());
     char reply[512];
     if (!onlineReply("Creating the lobby", reply, sizeof(reply), "hosted"))
@@ -228,6 +238,10 @@ static bool onlineHostLobby(void)
     }
     relaySetHostGamePort(g_netPort);
     gOnlineMode = kOnlineHost;
+    // the level starts right away: who comes later joins a running game (JOIN DURING GAME decides)
+    relaySendText("state\tplaying");
+    nPolicySent = clamp(gOnlineJoinPolicy, 0, 2);
+    nJoinRequests = 0;
     char buffer[128];
     Bsnprintf(buffer, sizeof(buffer), "Lobby \"%s\" is open", zLobbyName);
     onlineSetStatus(buffer);
@@ -380,6 +394,23 @@ bool chosenJoinLobby(const char *pzLobby)
     {
         relayClose();
         return false;
+    }
+    if (msgField(reply, 0) == "join_wait")
+    {
+        // the game runs and its host decides who comes in
+        if (!onlineWait("Waiting for the host to let you in", 65000, [&]() {
+                while (relayReadText(reply, sizeof(reply)))
+                {
+                    std::string cmd = msgField(reply, 0);
+                    if (cmd == "joined" || cmd == "error")
+                        return true;
+                }
+                return false;
+            }))
+        {
+            relayClose();
+            return false;
+        }
     }
     if (msgField(reply, 0) == "error")
     {
@@ -671,6 +702,29 @@ void chosenFrame(void)
                 P_DoQuote(QUOTE_RESERVED4, g_player[myconnectindex].ps);
             }
         }
+        else if (cmd == "join_request" && gOnlineMode == kOnlineHost)
+        {
+            if (nJoinRequests < (int)ARRAY_SIZE(joinRequests))
+            {
+                joinRequests[nJoinRequests].nId = atoi(msgField(msg, 1).c_str());
+                Bstrncpyz(joinRequests[nJoinRequests].szName, msgField(msg, 2).c_str(), sizeof(joinRequests[0].szName));
+                nJoinRequests++;
+                nNextJoinQuote = 0;
+            }
+            else
+                relaySendText(("join_answer\t" + msgField(msg, 1) + "\tno").c_str());
+        }
+        else if (cmd == "join_cancel")
+        {
+            int const nId = atoi(msgField(msg, 1).c_str());
+            for (int i = 0; i < nJoinRequests; i++)
+                if (joinRequests[i].nId == nId)
+                {
+                    memmove(&joinRequests[i], &joinRequests[i + 1], (nJoinRequests - i - 1) * sizeof(joinRequests[0]));
+                    nJoinRequests--;
+                    break;
+                }
+        }
         else if (cmd == "chat")
         {
             // a line from someone not in the game (the dashboard); players' own lines come through the game
@@ -695,6 +749,48 @@ void chosenFrame(void)
 
     if (relayStatus() != kRelayOnline)
         return;
+    if (gOnlineMode == kOnlineHost)
+    {
+        // JOIN DURING GAME changed in the menu while hosting
+        int const nPolicy = clamp(gOnlineJoinPolicy, 0, 2);
+        if (nPolicy != nPolicySent)
+        {
+            relaySendText((std::string("join_policy\t") + kJoinPolicies[nPolicy]).c_str());
+            nPolicySent = nPolicy;
+        }
+        // somebody asks to join: Y lets them in, N doesn't (not while typing or in a menu)
+        if (nJoinRequests)
+        {
+            auto *const ps = g_player[myconnectindex].ps;
+            bool const bFree = !(ps->gm & (MODE_MENU | MODE_TYPE));
+            int nAnswer = 0;
+            if (bFree && KB_KeyPressed(sc_Y))
+            {
+                KB_ClearKeyDown(sc_Y);
+                nAnswer = 1;
+            }
+            else if (bFree && KB_KeyPressed(sc_N))
+            {
+                KB_ClearKeyDown(sc_N);
+                nAnswer = -1;
+            }
+            if (nAnswer)
+            {
+                relaySendText((std::string("join_answer\t") + std::to_string(joinRequests[0].nId) + (nAnswer > 0 ? "\tyes" : "\tno")).c_str());
+                memmove(&joinRequests[0], &joinRequests[1], (nJoinRequests - 1) * sizeof(joinRequests[0]));
+                nJoinRequests--;
+                nNextJoinQuote = 0;
+            }
+            else if ((int32_t)(timerGetTicks() - nNextJoinQuote) >= 0 && apStrings[QUOTE_RESERVED4])
+            {
+                char buffer[MAXQUOTELEN];
+                Bsnprintf(buffer, sizeof(buffer), "%s wants to join - Y: let in, N: no", joinRequests[0].szName);
+                Bstrncpyz(apStrings[QUOTE_RESERVED4], buffer, MAXQUOTELEN);
+                P_DoQuote(QUOTE_RESERVED4, ps);
+                nNextJoinQuote = timerGetTicks() + 3000;
+            }
+        }
+    }
     if (gOnlineMode == kOnlineReport && !bReportSent)
     {
         static uint32_t nLastTry;
@@ -766,6 +862,12 @@ bool chosenCommandLine(const char *pzOption, const char *pzValue)
                 Bstrncpyz(o.pBuffer, pzValue, o.nSize);
             return true;
         }
+    if (!Bstrcasecmp(pzOption, "online-join-policy"))  // anyone | ask | nobody (or 0-2)
+    {
+        if (pzValue)
+            gOnlineJoinPolicy = !Bstrcasecmp(pzValue, "ask") ? 1 : !Bstrcasecmp(pzValue, "nobody") ? 2 : !Bstrcasecmp(pzValue, "anyone") ? 0 : clamp(atoi(pzValue), 0, 2);
+        return true;
+    }
     if (!Bstrcasecmp(pzOption, "online-host"))
     {
         nCommandLineAction = 1;

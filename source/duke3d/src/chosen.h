@@ -40,6 +40,7 @@ extern char gOnlineServer[64];
 extern char gOnlineKey[48];
 extern char gOnlineLobby[25];
 extern char gOnlineLobbyPassword[25];  // a private lobby: players need the same password
+extern int32_t gOnlineJoinPolicy;  // joining a hosted game while it runs: 0 anyone, 1 ask the host, 2 nobody
 extern int32_t gOnlineReportLan;  // show hosted LAN games on the dashboard
 extern int gOnlineMode;
 
@@ -76,7 +77,8 @@ void chosenLanScanStart(void);
 int chosenLanScanPoll(CHOSENLISTENTRY *pList, int nMax);  // games found so far
 void chosenLanScanStop(void);
 
-// command line: -online-server ADDRESS, -online-key KEY, -online-password PW, -online-host [LOBBY],
+// command line: -online-server ADDRESS, -online-key KEY, -online-password PW, -online-join-policy
+// anyone|ask|nobody, -online-host,
 // -online-join LOBBY (hosts or joins once the main menu is up); true when the option was one of these
 bool chosenCommandLine(const char *pzOption, const char *pzValue);
 bool chosenCommandLineTakesValue(const char *pzOption);

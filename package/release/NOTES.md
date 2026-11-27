@@ -21,6 +21,7 @@ Everybody in a network game needs **1.1**.
 
 ## New in 1.1
 - **Public server duke3d.pi-mole.com**: leave SERVER empty in ONLINE and host or join right away; https://duke3d.pi-mole.com shows the games live and has the web version.
+- **JOIN DURING GAME** in ONLINE: who may join the game you host while it runs: **Anyone**, **Ask Me** (you see "NAME wants to join - Y: let in, N: no") or **Nobody** (the game is locked). Can be changed while you play.
 - **Private lobbies**: fill in the lobby password before HOST A LOBBY; players type the same one to join (upper and lower case don't matter). The lobby list shows LOCKED.
 - **Sound on iPad/iPhone** in the web version, also in silent mode.
 - **Network games on computers without IPv6** work now (the game opened no network connection there).
