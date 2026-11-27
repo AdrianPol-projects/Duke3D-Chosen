@@ -9,6 +9,16 @@ Unzip, put your `DUKE3D.GRP` next to the game and start it. Any Duke Nukem 3D wo
 **What Duke3D Chosen adds to EDuke32**
 * **MULTIPLAYER** in the main menu:
   * **PLAY WITH BOTS**: up to 7 computer players (4 difficulties) in DukeMatch, Team DukeMatch or co-op, offline.
+  * **Match types** (bot matches and hosted games, *Match* in the game options; bots play them all):
+    * **DukeMatch** and **Team DukeMatch**, **co-op**.
+    * **Gun Game**: every kill gives the next weapon; a kill with the boot wins.
+    * **King of the Hill**: a point a second for holding the hill alone (teams: your team); 60 win.
+    * **Last Man Standing**: 3 lives each; the last one left wins (Team DukeMatch: the last team).
+    * **Juggernaut**: one player has 300 health and is bigger; who kills them becomes it; 10 points win.
+    * **Capture the Flag** (teams): bring the other team's key card home while yours is there; 3 captures win.
+    * **Hide and Seek**: hiders look like the level's decorations and can't shoot; the seekers come after 15 seconds; whoever is found seeks.
+    * **Survival** (co-op): waves of monsters, bigger every time; 3 lives each, back with every wave.
+    * A line at the top of the screen shows how the match goes. In network games the host runs the match and everybody sees it.
   * **Bots in network games**: a host's game options have *Bots* and *Bot Skill*; the host plays the bots, so LAN games, online lobbies (public or with the server key) can mix people and bots. Everybody sees them as players, the lobby list counts them, and they show on the website's live view. A player who wants into a full game takes a bot's place. Command line: `-host-bots N` with `-online-host`.
   * **HOST LAN GAME**: pick the game type (DukeMatch, co-op, ...), episode, level and monsters, and play. Others can join at any time while you play.
   * **FIND LAN GAMES**: lists the games on your network; pick one to join. **JOIN BY ADDRESS** for anything else.

@@ -1486,6 +1486,11 @@ static MenuEntry_t ME_NETOPTIONS_MAPEXITS = MAKE_MENUENTRY( "Map Exits", &MF_Red
 static MenuOption_t MEO_NETOPTIONS_FRFIRE = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &ud.m_ffire );
 static MenuEntry_t ME_NETOPTIONS_FRFIRE = MAKE_MENUENTRY( "Fr. Fire", &MF_Redfont, &MEF_NetSetup, &MEO_NETOPTIONS_FRFIRE, Option );
 // Duke3D Chosen: bots in the hosted game (LAN, online)
+static char const *MEOSN_NETOPTIONS_MATCH[] = { "DukeMatch", "Gun Game", "King of the Hill", "Last Man Standing", "Juggernaut",
+    "Capture the Flag", "Hide and Seek", "Survival", };
+static MenuOptionSet_t MEOS_NETOPTIONS_MATCH = MAKE_MENUOPTIONSET( MEOSN_NETOPTIONS_MATCH, NULL, 0x3 );
+static MenuOption_t MEO_NETOPTIONS_MATCH = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_NETOPTIONS_MATCH, &gBotMode );
+static MenuEntry_t ME_NETOPTIONS_MATCH = MAKE_MENUENTRY( "Match", &MF_Redfont, &MEF_NetSetup, &MEO_NETOPTIONS_MATCH, Option );
 static MenuRangeInt32_t MEO_NETOPTIONS_BOTS = MAKE_MENURANGE( &gBotNetCount, &MF_Bluefont, 0, kBotMaxBots, 0, kBotMaxBots+1, DisplayTypeInteger );
 static MenuEntry_t ME_NETOPTIONS_BOTS = MAKE_MENUENTRY( "Bots", &MF_Redfont, &MEF_NetSetup, &MEO_NETOPTIONS_BOTS, RangeInt32 );
 static char const *MEOSN_NETOPTIONS_BOTSKILL[] = { "Easy", "Normal", "Hard", "Insane", };
@@ -1501,6 +1506,7 @@ static MenuEntry_t *MEL_NETOPTIONS[] = {
     &ME_NETOPTIONS_MONSTERS,
     &ME_NETOPTIONS_MARKERS,
     &ME_NETOPTIONS_MAPEXITS,
+    &ME_NETOPTIONS_MATCH,
     &ME_NETOPTIONS_BOTS,
     &ME_NETOPTIONS_BOTSKILL,
     &ME_NETOPTIONS_ACCEPT,
@@ -1550,7 +1556,8 @@ static char const *MEOSN_CHOSEN_BOTSKILL[] = { "Easy", "Normal", "Hard", "Insane
 static MenuOptionSet_t MEOS_CHOSEN_BOTSKILL = MAKE_MENUOPTIONSET( MEOSN_CHOSEN_BOTSKILL, NULL, 0x3 );
 static MenuOption_t MEO_CHOSEN_BOTSKILL = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_CHOSEN_BOTSKILL, &gBotSkill );
 static MenuEntry_t ME_CHOSEN_BOTSKILL = MAKE_MENUENTRY( "Difficulty", &MF_Redfont, &MEF_ChosenBots, &MEO_CHOSEN_BOTSKILL, Option );
-static char const *MEOSN_CHOSEN_BOTMODE[] = { "DukeMatch", "Gun Game", "King of the Hill", "Last Man Standing", };
+static char const *MEOSN_CHOSEN_BOTMODE[] = { "DukeMatch", "Gun Game", "King of the Hill", "Last Man Standing", "Juggernaut",
+    "Capture the Flag", "Hide and Seek", "Survival", };
 static MenuOptionSet_t MEOS_CHOSEN_BOTMODE = MAKE_MENUOPTIONSET( MEOSN_CHOSEN_BOTMODE, NULL, 0x3 );
 static MenuOption_t MEO_CHOSEN_BOTMODE = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_CHOSEN_BOTMODE, &gBotMode );
 static MenuEntry_t ME_CHOSEN_BOTMODE = MAKE_MENUENTRY( "Mode", &MF_Redfont, &MEF_ChosenBots, &MEO_CHOSEN_BOTMODE, Option );
@@ -2971,6 +2978,7 @@ static void Menu_Pre(MenuID_t cm)
         // the bots of a hosted game (a bot match has its own count; a running game keeps its bots)
         MenuEntry_HideOnCondition(&ME_NETOPTIONS_BOTS, s_chosenHostBots || g_netServer || g_netClient);
         MenuEntry_HideOnCondition(&ME_NETOPTIONS_BOTSKILL, s_chosenHostBots || g_netServer || g_netClient);
+        MenuEntry_HideOnCondition(&ME_NETOPTIONS_MATCH, s_chosenHostBots || g_netServer || g_netClient);
         if (MEOSV_NetEpisodes[MEO_NETOPTIONS_EPISODE.currentOption] == MAXVOLUMES)
             MEL_NETOPTIONS[2] = &ME_NETOPTIONS_USERMAP;
         else

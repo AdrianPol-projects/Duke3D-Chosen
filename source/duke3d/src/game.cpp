@@ -4552,6 +4552,8 @@ skip:
             G_DoEventAnimSprites(j);
     }
 
+    botDrawPlayers();  // Duke3D Chosen: hiders, the juggernaut
+
 #if 1//def DEBUGGINGAIDS
     g_spriteStat.numonscreen = spritesortcnt;
 #endif

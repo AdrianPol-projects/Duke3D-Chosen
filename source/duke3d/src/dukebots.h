@@ -28,7 +28,11 @@ enum
     kBotModeDukeMatch = 0,
     kBotModeGunGame,      // every kill: the next weapon; a kill with the last (the boot) wins
     kBotModeHill,         // a point a second for whoever holds the hill alone; 60 win
-    kBotModeLastMan,      // 3 lives each; the last one left wins
+    kBotModeLastMan,      // 3 lives each; the last one left wins (teams: the last team)
+    kBotModeJuggernaut,   // one player is the juggernaut (300 health): who kills them becomes it; 10 points win
+    kBotModeCaptureFlag,  // teams: bring the other team's key card home while yours is there; 3 captures win
+    kBotModeHideSeek,     // hiders look like the level's decorations; seekers come after 15 s; the found join them
+    kBotModeSurvival,     // co-op: waves of monsters, 3 lives each (back every wave)
     kBotModeMax,
 };
 
@@ -68,3 +72,10 @@ void botNetPlayerJoined(void);
 bool botNetMakeRoom(void);
 bool botNetGameHasBots(void);
 int botNetCount(void);
+
+// match types in network games: the host sends the match to everybody; every machine shows it
+void botReceiveModeState(uint8_t const *buf, int nLength);
+int botModeRunning(void);         // the match type (-1: none)
+void botDrawPlayers(void);        // after G_DoSpriteAnimations: hiders, the juggernaut
+void botDrawHud(void);            // the match's line on the screen
+void botFixGameType(int nMatch);  // ud.m_coop for the match type (co-op for survival, teams for the flags)

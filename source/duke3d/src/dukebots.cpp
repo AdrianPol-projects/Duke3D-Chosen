@@ -341,6 +341,7 @@ int FindBreakable(BOT *pBot, DukePlayer_t *ps)
 
 // how much a bot wants this item now (0: not at all)
 bool ModeActive(int nWhich);
+bool IsEnemy(int nMe, int nOther);
 
 int ItemValue(DukePlayer_t *ps, int nSprite)
 {
@@ -538,9 +539,7 @@ int FindTarget(int nBot, BOT *pBot)
     {
         for (int TRAVERSE_CONNECT(p))
         {
-            if (p == nBot || !PlayerAlive(p))
-                continue;
-            if (TeamGame() && PlayerTeam(p) == PlayerTeam(nBot))
+            if (p == nBot || !PlayerAlive(p) || !IsEnemy(nBot, p))
                 continue;
             consider(PlayerOf(p)->i);
         }
@@ -549,24 +548,57 @@ int FindTarget(int nBot, BOT *pBot)
 }
 
 // ---- match types --------------------------------------------------------------------------------
+// The machine that runs the match (a bot match, or the host of a network game) decides everything:
+// scores, gun levels, lives, who the juggernaut is, the flags, who hides, the waves. It sends that
+// to the other machines (Net_SendModeState), and every machine applies the rules to the players it
+// plays itself (ModeLocal: the weapons of the gun game, no shooting for hiders...).
 
-const char *const kModeNames[kBotModeMax] = { "DukeMatch", "Gun Game", "King of the Hill", "Last Man Standing" };
+const char *const kModeNames[kBotModeMax] = { "DukeMatch", "Gun Game", "King of the Hill", "Last Man Standing", "Juggernaut",
+    "Capture the Flag", "Hide and Seek", "Survival" };
 int const kGunGameOrder[] = { PISTOL_WEAPON, SHOTGUN_WEAPON, CHAINGUN_WEAPON, FREEZE_WEAPON, RPG_WEAPON, DEVISTATOR_WEAPON, SHRINKER_WEAPON, KNEE_WEAPON };
 int const kGunGameSteps = ARRAY_SIZE(kGunGameOrder);
 int const kLives = 3;
 int const kHillWin = 60;
+int const kJuggernautWin = 10;
+int const kJuggernautHealth = 300;
+int const kFlagWin = 3;
+int const kFlagReturnTics = 30 * 30;
+int const kHideFreezeTics = 30 * 15;
+int const kHideRoundTics = 30 * 150;
+int const kSurvivalLives = 3;
 
-int nMode;                       // the match type of the running match (co-op: always DukeMatch rules)
+int nMode;                       // the match type of the running match
+bool bFromHost;                  // a network game's client: the host's match (Net_ReceiveModeState)
 int gunLevel[MAXPLAYERS];
 int lives[MAXPLAYERS];
-int hillPoints[MAXPLAYERS];
+int hillPoints[MAXPLAYERS];      // the score of the modes that count points (the hill, the juggernaut, hide and seek)
 int nHillSect = -1;
 uint8_t inHill[MAXSECTORS];
 int nHillTic;
+int nJuggernaut = -1;
+// capture the flag: per team (0 blue, 1 red)
+struct FLAG { int nSprite, nHomeX, nHomeY, nHomeZ, nHomeSect, nCarrier, nDropTic; bool bHome; };
+FLAG flags[2];
+int teamScore[2];
+// hide and seek
+uint16_t nSeekers;               // a bit per player
+int nHideTic;                    // tics into the round
+uint16_t nDecorPic[MAXPLAYERS];  // what each hider looks like
+// survival
+int nWave, nWaveTic, nWaveMonsters;
+bool bWaveRunning;
 
 bool ModeActive(int nWhich)
 {
-    return nMode == nWhich && !CoopGame();
+    if (nMode != nWhich)
+        return false;
+    return nWhich == kBotModeSurvival ? CoopGame() : !CoopGame();
+}
+
+// this machine runs the match (not a network game's client)
+bool ModeAuthority(void)
+{
+    return !g_netClient;
 }
 
 void Announce(const char *pzText)
@@ -576,16 +608,62 @@ void Announce(const char *pzText)
     LOG_F(INFO, "Bot match: %s", pzText);
 }
 
+bool IsSeeker(int p) { return (nSeekers >> p) & 1; }
+bool IsHider(int p) { return ModeActive(kBotModeHideSeek) && !IsSeeker(p); }
+
 bool PlayerOut(int nPlayer)
 {
-    return ModeActive(kBotModeLastMan) && lives[nPlayer] <= 0;
+    return (ModeActive(kBotModeLastMan) || ModeActive(kBotModeSurvival)) && lives[nPlayer] <= 0;
+}
+
+int FlagOfTeam(int t) { return clamp(t, 0, 1); }
+
+// who a player fights (bots)
+bool IsEnemy(int nMe, int nOther)
+{
+    if (nMe == nOther)
+        return false;
+    if (ModeActive(kBotModeHideSeek))
+        return IsSeeker(nMe) && !IsSeeker(nOther) && nHideTic >= kHideFreezeTics;
+    if (TeamGame() || ModeActive(kBotModeCaptureFlag))
+        return PlayerTeam(nMe) != PlayerTeam(nOther);
+    return true;
+}
+
+// the main part of the level: what most spawn points can walk to (keys and closed roofs make smaller ones).
+// A sector is in it when as much can be reached from there (two thirds of it).
+int BigArea(void)
+{
+    static int nFor = -1, nSize = 1;
+    int const nId = numsectors * 7919 + numwalls;
+    if (nFor != nId)
+    {
+        nFor = nId;
+        int nBest = 1;
+        for (int i = 0; i < g_playerSpawnCnt; i++)
+            if ((unsigned)g_playerSpawnPoints[i].sect < (unsigned)numsectors)
+                nBest = max(nBest, AreaSize(g_playerSpawnPoints[i].sect));
+        nSize = max(1, nBest * 2 / 3);
+        LOG_F(INFO, "Bot match: the main part of the level is %d of %d sectors", nBest, numsectors);
+    }
+    return nSize;
 }
 
 // a hill: a big sector most of the level can walk to, and the sectors around it
-void PickHill(void)
+void MarkHill(int nSect)
 {
     Bmemset(inHill, 0, sizeof(inHill));
-    nHillSect = -1;
+    nHillSect = nSect;
+    if ((unsigned)nSect >= (unsigned)numsectors)
+        return;
+    inHill[nSect] = 1;
+    for (int w = sector[nSect].wallptr, e = w + sector[nSect].wallnum; w < e; w++)
+        if (wall[w].nextsector >= 0 && Passable(w))
+            inHill[wall[w].nextsector] = 1;
+}
+
+void PickHill(void)
+{
     int nBest = -1;
     int64_t nBestScore = -1;
     for (int nTry = 0; nTry < 60; nTry++)
@@ -593,7 +671,7 @@ void PickHill(void)
         int const s = (int)((nTic * 7919u + nTry * 104729u) % (unsigned)max<int>(numsectors, 1));
         if ((sector[s].lotag & 0x7fff) == ST_2_UNDERWATER || sector[s].floorz - sector[s].ceilingz < (40 << 8))
             continue;
-        if (AreaSize(s) < numsectors / 3)
+        if (AreaSize(s) < BigArea())
             continue;  // in the big connected part of the level (not a closed roof)
         int minx = INT32_MAX, maxx = INT32_MIN, miny = INT32_MAX, maxy = INT32_MIN;
         for (int w = sector[s].wallptr, e = w + sector[s].wallnum; w < e; w++)
@@ -604,47 +682,482 @@ void PickHill(void)
     }
     if (nBest < 0)
         nBest = PlayerOf(0)->cursectnum;
-    nHillSect = nBest;
-    inHill[nBest] = 1;
-    for (int w = sector[nBest].wallptr, e = w + sector[nBest].wallnum; w < e; w++)
-        if (wall[w].nextsector >= 0 && Passable(w))
-            inHill[wall[w].nextsector] = 1;
+    MarkHill(nBest);
     LOG_F(INFO, "Bot match: the hill is sector %d", nBest);
+}
+
+// ---- capture the flag
+
+void PlaceFlagSprite(FLAG &f, int x, int y, int z, int nSect)
+{
+    if (f.nSprite < 0 || (unsigned)nSect >= (unsigned)numsectors)
+        return;
+    vec3_t const v = { x, y, z };
+    setsprite(f.nSprite, &v);
+}
+
+void FlagHome(int t)
+{
+    FLAG &f = flags[t];
+    f.bHome = true;
+    f.nCarrier = -1;
+    PlaceFlagSprite(f, f.nHomeX, f.nHomeY, f.nHomeZ, f.nHomeSect);
+}
+
+// the flags: at the two spawn points furthest apart (both in the big part of the level)
+void SetupFlags(void)
+{
+    for (int t = 0; t < 2; t++)
+    {
+        if (flags[t].nSprite >= 0 && flags[t].nSprite < MAXSPRITES && sprite[flags[t].nSprite].statnum != MAXSTATUS && sprite[flags[t].nSprite].picnum == ACCESSCARD)
+            deletesprite(flags[t].nSprite);
+        flags[t].nSprite = -1;
+    }
+    // homes: open places in the big part of the level, away from where players spawn, as far apart as can be
+    int cand[64], nCand = 0;
+    for (int k = 0; k < numsectors && nCand < 64; k++)
+    {
+        int const sct = (int)((k * 2654435761u) % (unsigned)numsectors);
+        if ((sector[sct].lotag & 0x7fff) == ST_2_UNDERWATER || sector[sct].floorz - sector[sct].ceilingz < (48 << 8) ||
+            inside(sectCenterX[sct], sectCenterY[sct], sct) != 1 || AreaSize(sct) < BigArea())
+            continue;
+        // an ordinary room (a huge sector is a backdrop or an outside area you can't really get into)
+        int minx = INT32_MAX, maxx = INT32_MIN, miny = INT32_MAX, maxy = INT32_MIN;
+        for (int w = sector[sct].wallptr, e = w + sector[sct].wallnum; w < e; w++)
+            minx = min<int>(minx, wall[w].x), maxx = max<int>(maxx, wall[w].x), miny = min<int>(miny, wall[w].y), maxy = max<int>(maxy, wall[w].y);
+        if (maxx - minx > 4096 || maxy - miny > 4096 || maxx - minx < 512 || maxy - miny < 512)
+            continue;
+        // not on a spawn point, but near one: the parts of the level players get to (not behind a key door)
+        int nNearest = INT32_MAX;
+        for (int i = 0; i < g_playerSpawnCnt; i++)
+            nNearest = min(nNearest, Dist2D(g_playerSpawnPoints[i].x - sectCenterX[sct], g_playerSpawnPoints[i].y - sectCenterY[sct]));
+        if (nNearest >= 1200 && nNearest <= 4000)
+            cand[nCand++] = sct;
+    }
+    int nHomeA = -1, nHomeB = -1;
+    int64_t nBestHome = -1;
+    for (int i = 0; i < nCand; i++)
+        for (int j = i + 1; j < nCand; j++)
+        {
+            int64_t const dx = sectCenterX[cand[i]] - sectCenterX[cand[j]], dy = sectCenterY[cand[i]] - sectCenterY[cand[j]];
+            if (dx * dx + dy * dy > nBestHome && FindPath(&bots[MAXPLAYERS - 1], cand[i], cand[j]))
+                nBestHome = dx * dx + dy * dy, nHomeA = cand[i], nHomeB = cand[j];
+        }
+    int nA = -1, nB = -1;
+    int64_t nBest = -1;
+    for (int i = 0; nHomeA < 0 && i < g_playerSpawnCnt; i++)
+        for (int j = i + 1; j < g_playerSpawnCnt; j++)
+        {
+            auto const &a = g_playerSpawnPoints[i], &b = g_playerSpawnPoints[j];
+            if ((unsigned)a.sect >= (unsigned)numsectors || (unsigned)b.sect >= (unsigned)numsectors)
+                continue;
+            int64_t const d = (int64_t)(a.x - b.x) * (a.x - b.x) + (int64_t)(a.y - b.y) * (a.y - b.y);
+            if (d > nBest && AreaSize(a.sect) >= BigArea() && FindPath(&bots[MAXPLAYERS - 1], a.sect, b.sect))
+                nBest = d, nA = i, nB = j;
+        }
+    if (nHomeA < 0 && nA < 0)
+    {
+        nA = 0, nB = g_playerSpawnCnt > 1 ? 1 : 0;
+        LOG_F(WARNING, "Capture the Flag: no two places far apart, using spawn points %d and %d", nA, nB);
+    }
+    int const pick[2] = { nA, nB };
+    int const homes[2] = { nHomeA, nHomeB };
+    for (int t = 0; t < 2; t++)
+    {
+        playerspawn_t sp;
+        if (nHomeA >= 0)
+            sp.x = sectCenterX[homes[t]], sp.y = sectCenterY[homes[t]], sp.sect = homes[t];
+        else
+            sp = g_playerSpawnPoints[pick[t]];
+        FLAG &f = flags[t];
+        f.nHomeX = sp.x, f.nHomeY = sp.y, f.nHomeSect = sp.sect;
+        f.nHomeZ = sector[sp.sect].floorz;
+        int const s = insertsprite(sp.sect, 0);
+        if (s >= 0)
+        {
+            spritetype &spr = sprite[s];
+            spr.x = sp.x, spr.y = sp.y, spr.z = f.nHomeZ;
+            spr.picnum = ACCESSCARD;
+            spr.pal = t == 0 ? 0 : 21;  // a blue and a red key card
+            spr.xrepeat = spr.yrepeat = 48;
+            spr.cstat = 0;
+            spr.shade = -16;
+            spr.owner = -1;
+            spr.extra = 0;
+            spr.ang = 0;
+            spr.xvel = spr.yvel = spr.zvel = 0;
+            spr.lotag = spr.hitag = 0;
+        }
+        f.nSprite = s;
+        FlagHome(t);
+    }
+    teamScore[0] = teamScore[1] = 0;
+    LOG_F(INFO, "Capture the Flag: blue flag in sector %d, red flag in sector %d (%d places looked at)", flags[0].nHomeSect, flags[1].nHomeSect, nCand);
+}
+
+int Near(DukePlayer_t *ps, int x, int y, int z, int nDist)
+{
+    return Dist2D(ps->pos.x - x, ps->pos.y - y) < nDist && klabs(ps->pos.z - z) < (64 << 8);
+}
+
+void FlagTick(void)
+{
+    for (int t = 0; t < 2; t++)
+    {
+        FLAG &f = flags[t];
+        if (f.nSprite < 0)
+            continue;
+        if (f.nCarrier >= 0)
+        {
+            auto *pc = PlayerOf(f.nCarrier);
+            if (!g_player[f.nCarrier].playerquitflag || !PlayerAlive(f.nCarrier))
+            {
+                // dropped where the carrier died
+                f.nCarrier = -1;
+                f.nDropTic = nTic;
+                if (pc && (unsigned)pc->cursectnum < (unsigned)numsectors)
+                    PlaceFlagSprite(f, pc->pos.x, pc->pos.y, sector[pc->cursectnum].floorz, pc->cursectnum);
+                char buffer[64];
+                Bsnprintf(buffer, sizeof(buffer), "The %s flag was dropped", t ? "red" : "blue");
+                Announce(buffer);
+                continue;
+            }
+            PlaceFlagSprite(f, pc->pos.x, pc->pos.y, pc->pos.z + (20 << 8), pc->cursectnum);
+            // home with it while their own flag is home: a capture
+            int const nOwn = FlagOfTeam(PlayerTeam(f.nCarrier));
+            if (flags[nOwn].bHome && Near(pc, flags[nOwn].nHomeX, flags[nOwn].nHomeY, flags[nOwn].nHomeZ - (20 << 8), 700))
+            {
+                int const nScore = ++teamScore[nOwn];
+                int const nBy = f.nCarrier;
+                hillPoints[nBy]++;
+                FlagHome(t);  // (no carrier from here on)
+                char buffer[96];
+                if (nScore >= kFlagWin)
+                {
+                    Bsnprintf(buffer, sizeof(buffer), "%s captures! The %s team wins %d-%d", g_player[nBy].user_name, nOwn ? "red" : "blue",
+                              teamScore[nOwn], teamScore[nOwn ^ 1]);
+                    Announce(buffer);
+                    teamScore[0] = teamScore[1] = 0;
+                    FlagHome(0), FlagHome(1);
+                }
+                else
+                {
+                    Bsnprintf(buffer, sizeof(buffer), "%s captures the %s flag! Blue %d - Red %d", g_player[nBy].user_name, t ? "red" : "blue",
+                              teamScore[0], teamScore[1]);
+                    Announce(buffer);
+                }
+            }
+            continue;
+        }
+        spritetype const &spr = sprite[f.nSprite];
+        if (!f.bHome && nTic - f.nDropTic > kFlagReturnTics)
+        {
+            FlagHome(t);
+            char buffer[64];
+            Bsnprintf(buffer, sizeof(buffer), "The %s flag went home", t ? "red" : "blue");
+            Announce(buffer);
+            continue;
+        }
+        for (int TRAVERSE_CONNECT(p))
+        {
+            if (!PlayerAlive(p) || !Near(PlayerOf(p), spr.x, spr.y, spr.z - (20 << 8), 600))
+                continue;
+            char buffer[96];
+            if (FlagOfTeam(PlayerTeam(p)) == t)
+            {
+                if (!f.bHome)
+                {
+                    FlagHome(t);
+                    Bsnprintf(buffer, sizeof(buffer), "%s brought the %s flag home", g_player[p].user_name, t ? "red" : "blue");
+                    Announce(buffer);
+                }
+                continue;
+            }
+            f.nCarrier = p;
+            f.bHome = false;
+            Bsnprintf(buffer, sizeof(buffer), "%s has the %s flag!", g_player[p].user_name, t ? "red" : "blue");
+            Announce(buffer);
+            break;
+        }
+    }
+}
+
+// ---- hide and seek
+
+int PickDecorPic(int nPlayer)
+{
+    // a decoration of the level (something with no game code: plants, chairs, lamps, cans...)
+    int nFound = 0, nPic = 0;
+    for (int i = headspritestat[STAT_DEFAULT]; i >= 0; i = nextspritestat[i])
+    {
+        auto const &s = sprite[i];
+        if (s.picnum < 10 || (s.cstat & (16 | 32 | 32768)) || s.xrepeat < 16 || s.yrepeat < 16 || tilesiz[s.picnum].y < 16 || tilesiz[s.picnum].y > 128)
+            continue;
+        if (A_CheckEnemySprite(&s) || s.picnum == ACCESSCARD)
+            continue;
+        if ((int)((nTic * 2654435761u + i * 40503u + nPlayer * 7919u) >> 7) % ++nFound == 0)
+            nPic = s.picnum;
+    }
+    return nPic ? nPic : FIRE;  // nothing found: a fire
+}
+
+void StartHideRound(void)
+{
+    nHideTic = 0;
+    nSeekers = 0;
+    int nPlayers = 0, list[MAXPLAYERS];
+    for (int TRAVERSE_CONNECT(p))
+        list[nPlayers++] = p;
+    // a seeker for every 4 players, at least one
+    int const nWant = max(1, nPlayers / 4);
+    for (int k = 0; k < nWant && nPlayers > 0; k++)
+    {
+        int const n = (int)((nTic * 2654435761u + k * 97u) >> 8) % nPlayers;
+        nSeekers |= 1 << list[n];
+        list[n] = list[--nPlayers];
+    }
+    for (int p = 0; p < MAXPLAYERS; p++)
+        nDecorPic[p] = PickDecorPic(p);
+    Announce("Hide and Seek: hide! The seekers come in 15 seconds");
+}
+
+void HideTick(void)
+{
+    nHideTic++;
+    if (nHideTic == kHideFreezeTics)
+        Announce("Ready or not, here they come!");
+    int nHiders = 0, nLast = -1;
+    for (int TRAVERSE_CONNECT(p))
+        if (!IsSeeker(p))
+            nHiders++, nLast = p;
+    char buffer[96];
+    if (nHiders == 0)
+    {
+        Announce("The seekers found everybody!");
+        StartHideRound();
+    }
+    else if (nHideTic >= kHideRoundTics)
+    {
+        for (int TRAVERSE_CONNECT(p))
+            if (!IsSeeker(p))
+                hillPoints[p] += 3;
+        if (nHiders == 1)
+            Bsnprintf(buffer, sizeof(buffer), "%s stayed hidden and wins the round!", g_player[nLast].user_name);
+        else
+            Bsnprintf(buffer, sizeof(buffer), "%d hiders stayed hidden and win the round!", nHiders);
+        Announce(buffer);
+        StartHideRound();
+    }
+}
+
+// ---- survival: waves of monsters in co-op
+
+int const kWaveMonsters[] = { LIZTROOP, PIGCOP, OCTABRAIN, LIZMAN, DRONE, COMMANDER };
+
+int CountMonsters(void)
+{
+    int n = 0;
+    for (int nStat : { STAT_ACTOR, STAT_ZOMBIEACTOR })  // awake, and asleep (not seen by anybody yet)
+        for (int i = headspritestat[nStat]; i >= 0; i = nextspritestat[i])
+            if (A_CheckEnemySprite(&sprite[i]) && sprite[i].extra > 0)
+                n++;
+    return n;
+}
+
+void ClearMonsters(void)
+{
+    for (int nStat : { STAT_ACTOR, STAT_ZOMBIEACTOR })
+        for (int i = headspritestat[nStat], next; i >= 0; i = next)
+        {
+            next = nextspritestat[i];
+            if (A_CheckEnemySprite(&sprite[i]))
+                A_DeleteSprite(i);
+        }
+}
+
+void SpawnWave(void)
+{
+    nWave++;
+    int const nCount = 4 + nWave * 3;
+    int const nTypes = min<int>(ARRAY_SIZE(kWaveMonsters), 2 + nWave / 2);
+    int nSpawned = 0;
+    for (int nTry = 0; nTry < nCount * 40 && nSpawned < nCount; nTry++)
+    {
+        int const s = (int)((nTic * 7919u + nTry * 104729u + nWave * 31u) % (unsigned)max<int>(numsectors, 1));
+        if ((sector[s].lotag & 0x7fff) == ST_2_UNDERWATER || sector[s].floorz - sector[s].ceilingz < (48 << 8) || AreaSize(s) < BigArea())
+            continue;
+        // not right next to a player, and not in sight
+        bool bOk = true;
+        for (int TRAVERSE_CONNECT(p))
+        {
+            auto *ps = PlayerOf(p);
+            int const d = Dist2D(ps->pos.x - sectCenterX[s], ps->pos.y - sectCenterY[s]);
+            if (d < 2500 || (d < 8000 && cansee(ps->pos.x, ps->pos.y, ps->pos.z, ps->cursectnum, sectCenterX[s], sectCenterY[s], sector[s].floorz - (32 << 8), s)))
+                bOk = false;
+        }
+        if (!bOk || inside(sectCenterX[s], sectCenterY[s], s) != 1)
+            continue;
+        int const i = insertsprite(s, 0);
+        if (i < 0)
+            break;
+        spritetype &spr = sprite[i];
+        spr.x = sectCenterX[s], spr.y = sectCenterY[s], spr.z = sector[s].floorz;
+        spr.picnum = kWaveMonsters[(nTry + nSpawned) % nTypes];
+        spr.xrepeat = spr.yrepeat = 40;
+        spr.cstat = 257;
+        spr.pal = 0;
+        spr.ang = (nTry * 337) & 2047;
+        spr.owner = i;
+        spr.lotag = spr.hitag = 0;
+        spr.extra = -1;
+        A_Spawn(-1, i);
+        if (sprite[i].statnum == STAT_ZOMBIEACTOR)
+            changespritestat(i, STAT_ACTOR);  // awake: they come for you
+        if (getenv("DUKE3D_BOT_DEBUG"))
+            LOG_F(INFO, "survival spawn %d: pic %d stat %d extra %d rep %d enemy %d", i, sprite[i].picnum, sprite[i].statnum, sprite[i].extra,
+                  sprite[i].xrepeat, A_CheckEnemySprite(&sprite[i]));
+        nSpawned++;
+    }
+    nWaveMonsters = nSpawned;
+    bWaveRunning = true;
+    // everybody is back, with their lives
+    for (int TRAVERSE_CONNECT(p))
+        if (lives[p] <= 0)
+            lives[p] = 1;
+    char buffer[64];
+    Bsnprintf(buffer, sizeof(buffer), "Wave %d: %d monsters", nWave, nSpawned);
+    Announce(buffer);
+}
+
+void SurvivalTick(void)
+{
+    if (!bWaveRunning)
+    {
+        if (++nWaveTic >= 30 * 6)
+            SpawnWave();
+        return;
+    }
+    if (nTic % 15)
+        return;
+    nWaveMonsters = CountMonsters();
+    if (nWaveMonsters == 0)
+    {
+        bWaveRunning = false;
+        nWaveTic = 0;
+        char buffer[64];
+        Bsnprintf(buffer, sizeof(buffer), "Wave %d cleared! The next one in 6 seconds", nWave);
+        Announce(buffer);
+        return;
+    }
+    // everybody out: the monsters win, from the start
+    int nIn = 0;
+    for (int TRAVERSE_CONNECT(p))
+        if (lives[p] > 0 || PlayerAlive(p))
+            nIn++;
+    if (nIn == 0)
+    {
+        char buffer[64];
+        Bsnprintf(buffer, sizeof(buffer), "Everybody is down! You made it to wave %d", nWave);
+        Announce(buffer);
+        ClearMonsters();
+        nWave = 0;
+        nWaveTic = 0;
+        bWaveRunning = false;
+        for (int p = 0; p < MAXPLAYERS; p++)
+            lives[p] = kSurvivalLives;
+    }
 }
 
 void ResetMode(void)
 {
     for (int i = 0; i < MAXPLAYERS; i++)
-        gunLevel[i] = 0, lives[i] = kLives, hillPoints[i] = 0;
+        gunLevel[i] = 0, lives[i] = nMode == kBotModeSurvival ? kSurvivalLives : kLives, hillPoints[i] = 0;
+    nJuggernaut = -1;
+    nHillSect = -1;
+    nSeekers = 0;
+    teamScore[0] = teamScore[1] = 0;
+    if (!ModeAuthority())
+        return;
     if (ModeActive(kBotModeHill))
         PickHill();
+    if (ModeActive(kBotModeCaptureFlag))
+        SetupFlags();
+    if (ModeActive(kBotModeHideSeek))
+        StartHideRound();
+    if (ModeActive(kBotModeSurvival))
+    {
+        ClearMonsters();
+        nWave = 0, nWaveTic = 0, bWaveRunning = false;
+        Announce("Survival: the first wave comes in 6 seconds");
+    }
+    if (ModeActive(kBotModeJuggernaut))
+        Announce("Juggernaut: kill the juggernaut to become it");
 }
+
+void MakeJuggernaut(int p)
+{
+    nJuggernaut = p;
+    if (p < 0)
+        return;
+    sprite[PlayerOf(p)->i].extra = kJuggernautHealth;
+    PlayerOf(p)->inv_amount[GET_SHIELD] = 100;
+    char buffer[64];
+    Bsnprintf(buffer, sizeof(buffer), "%s is the Juggernaut!", g_player[p].user_name);
+    Announce(buffer);
+}
+
+// the rules for a player this machine plays (its own player; the host: everybody it simulates)
+void ModeLocal(int p)
+{
+    auto *ps = PlayerOf(p);
+    if (!ps || ps->i < 0)
+        return;
+    input_t &in = inputfifo[(g_netServer && myconnectindex == p)][p];
+    if (PlayerOut(p))
+        in.bits &= ~(1u << SK_OPEN);  // who is out stays down
+    if (!PlayerAlive(p))
+        return;
+    if (ModeActive(kBotModeGunGame))
+    {
+        // the weapon of their step (and the boot), nothing else
+        int const w = kGunGameOrder[clamp(gunLevel[p], 0, kGunGameSteps - 1)];
+        ps->gotweapon &= (1 << KNEE_WEAPON) | (1 << w);
+        if (w != KNEE_WEAPON)
+        {
+            if (!(ps->gotweapon & (1 << w)))
+                P_AddWeapon(ps, w, 1);
+            ps->ammo_amount[w] = max<int>(ps->ammo_amount[w], ps->max_ammo_amount[w] / 2);
+        }
+        if (!(ps->gotweapon & (1 << ps->curr_weapon)) && !ps->reloading)
+            P_AddWeapon(ps, w, 1);
+    }
+    if (ModeActive(kBotModeHideSeek))
+    {
+        if (!IsSeeker(p))
+            in.bits &= ~((1u << SK_FIRE) | (15u << SK_WEAPON_BITS));  // hiders don't shoot
+        else if (nHideTic < kHideFreezeTics)
+        {
+            // seekers wait (and see nothing: they look at the floor)
+            in.fvel = in.svel = 0;
+            in.q16avel = 0;
+            in.bits &= ~((1u << SK_FIRE) | (1u << SK_JUMP));
+            ps->q16horiz = F16(199);
+        }
+    }
+}
+
+void SendState(void);
 
 void ModeTick(void)
 {
-    if (CoopGame())
+    // every machine: the rules for its own players
+    for (int TRAVERSE_CONNECT(p))
+        if (p == myconnectindex || (ModeAuthority() && (isBot[p] || g_netServer)))
+            ModeLocal(p);
+    if (!ModeAuthority())
         return;
-    if (nMode == kBotModeGunGame)
-    {
-        // everybody has the weapon of their step (and the boot), nothing else
-        for (int TRAVERSE_CONNECT(p))
-        {
-            auto *ps = PlayerOf(p);
-            if (!PlayerAlive(p))
-                continue;
-            int const w = kGunGameOrder[clamp(gunLevel[p], 0, kGunGameSteps - 1)];
-            ps->gotweapon &= (1 << KNEE_WEAPON) | (1 << w);
-            if (w != KNEE_WEAPON)
-            {
-                if (!(ps->gotweapon & (1 << w)))
-                    P_AddWeapon(ps, w, 1);
-                ps->ammo_amount[w] = max<int>(ps->ammo_amount[w], ps->max_ammo_amount[w] / 2);
-            }
-            if (!(ps->gotweapon & (1 << ps->curr_weapon)) && !ps->reloading)
-                P_AddWeapon(ps, w, 1);
-        }
-    }
-    else if (nMode == kBotModeHill && nHillSect >= 0 && ++nHillTic >= 30)
+
+    if (ModeActive(kBotModeHill) && nHillSect >= 0 && ++nHillTic >= 30)
     {
         nHillTic = 0;
         int nHolder = -1, nCount = 0;
@@ -665,44 +1178,53 @@ void ModeTick(void)
                 Announce(buffer);
                 ResetMode();  // a new hill, everybody from zero
             }
-            else if (nHolder == 0 && nPoints % 10 == 0)
-            {
-                char buffer[64];
-                Bsnprintf(buffer, sizeof(buffer), "You hold the hill: %d of %d", nPoints, kHillWin);
-                G_AddUserQuote(buffer);
-            }
-        }
-        // now and then: who leads
-        if (nTic % (30 * 15) < 30)
-        {
-            int nLead = 0;
-            for (int TRAVERSE_CONNECT(p))
-                if (hillPoints[p] > hillPoints[nLead])
-                    nLead = p;
-            char buffer[96];
-            Bsnprintf(buffer, sizeof(buffer), "Hill: %s leads with %d of %d", g_player[nLead].user_name, hillPoints[nLead], kHillWin);
-            G_AddUserQuote(buffer), Net_BroadcastQuote(buffer);
         }
     }
-    else if (nMode == kBotModeLastMan)
+    else if (ModeActive(kBotModeLastMan))
     {
-        // who is out stays down (no USE to come back)
-        int nIn = 0, nLast = -1;
+        int nIn = 0, nLast = -1, nTeamsIn = 0;
+        bool teamIn[2] = {};
         for (int TRAVERSE_CONNECT(p))
-        {
             if (lives[p] > 0)
+            {
                 nIn++, nLast = p;
-            else
-                inputfifo[0][p].bits &= ~(1u << SK_OPEN);
-        }
-        if (nIn <= 1)
+                if (!teamIn[PlayerTeam(p) & 1])
+                    teamIn[PlayerTeam(p) & 1] = true, nTeamsIn++;
+            }
+        bool const bTeams = TeamGame();
+        if (nIn <= 1 || (bTeams && nTeamsIn <= 1))
         {
             char buffer[96];
-            Bsnprintf(buffer, sizeof(buffer), "%s is the last man standing!", nLast >= 0 ? g_player[nLast].user_name : "Nobody");
+            if (bTeams)
+                Bsnprintf(buffer, sizeof(buffer), "The %s team is the last team standing!", nLast >= 0 && (PlayerTeam(nLast) & 1) ? "red" : "blue");
+            else
+                Bsnprintf(buffer, sizeof(buffer), "%s is the last man standing!", nLast >= 0 ? g_player[nLast].user_name : "Nobody");
             Announce(buffer);
             ResetMode();  // everybody gets their lives back and comes back
         }
     }
+    else if (ModeActive(kBotModeJuggernaut))
+    {
+        if (nJuggernaut < 0 || !g_player[nJuggernaut].playerquitflag)
+        {
+            // somebody alive becomes it (by chance)
+            for (int k = 0, p = (int)((nTic * 2654435761u) >> 12) % MAXPLAYERS; k < MAXPLAYERS; k++, p = (p + 1) % MAXPLAYERS)
+                if (g_player[p].playerquitflag && g_player[p].ps && PlayerAlive(p))
+                {
+                    MakeJuggernaut(p);
+                    break;
+                }
+        }
+    }
+    else if (ModeActive(kBotModeCaptureFlag))
+        FlagTick();
+    else if (ModeActive(kBotModeHideSeek))
+        HideTick();
+    else if (ModeActive(kBotModeSurvival))
+        SurvivalTick();
+
+    if (g_netServer && nTic % 15 == 0)
+        SendState();
 }
 
 // ---- goals ----------------------------------------------------------------------------------------
@@ -713,6 +1235,125 @@ void SetGoal(BOT *pBot, int x, int y, int nSect, int nKind, int nItem = -1)
     pBot->nGoalKind = nKind, pBot->nGoalItem = nItem;
     pBot->nGoalTime = nTic;
     pBot->nPath = pBot->nPathPos = 0;
+}
+
+// the goals of the match types (true: one was set)
+bool ModeGoalTo(BOT *pBot, DukePlayer_t *ps, int x, int y, int nSect, int nKind)
+{
+    if ((unsigned)nSect >= (unsigned)numsectors || !FindPath(pBot, ps->cursectnum, nSect))
+        return false;
+    SetGoal(pBot, x, y, nSect, nKind);
+    return true;
+}
+
+bool ModeGoal(int nBot, BOT *pBot)
+{
+    auto *ps = PlayerOf(nBot);
+    if (ModeActive(kBotModeSurvival))
+    {
+        // the nearest monster it can get to
+        int nBest = -1, nBestDist = INT32_MAX;
+        for (int nStat : { STAT_ACTOR, STAT_ZOMBIEACTOR })
+            for (int i = headspritestat[nStat]; i >= 0; i = nextspritestat[i])
+                if (A_CheckEnemySprite(&sprite[i]) && sprite[i].extra > 0)
+                {
+                    int const d = Dist2D(sprite[i].x - ps->pos.x, sprite[i].y - ps->pos.y) + BotRand(pBot, 2000);
+                    if (d < nBestDist)
+                        nBestDist = d, nBest = i;
+                }
+        return nBest >= 0 && BotRand(pBot, 100) < 80 && ModeGoalTo(pBot, ps, sprite[nBest].x, sprite[nBest].y, sprite[nBest].sectnum, 2);
+    }
+    if (ModeActive(kBotModeCaptureFlag))
+    {
+        int const nMine = FlagOfTeam(PlayerTeam(nBot)), nTheirs = nMine ^ 1;
+        FLAG const &mine = flags[nMine], &theirs = flags[nTheirs];
+        if (theirs.nCarrier == nBot)  // home with it
+        {
+            if (ModeGoalTo(pBot, ps, mine.nHomeX, mine.nHomeY, mine.nHomeSect, 5))
+                return true;
+        }
+        if (mine.nCarrier >= 0 && BotRand(pBot, 100) < 60)  // after who has our flag
+        {
+            auto *pc = PlayerOf(mine.nCarrier);
+            if (ModeGoalTo(pBot, ps, pc->pos.x, pc->pos.y, pc->cursectnum, 2))
+                return true;
+        }
+        if (!mine.bHome && mine.nCarrier < 0 && mine.nSprite >= 0)  // our flag lies somewhere: take it home
+        {
+            auto const &f = sprite[mine.nSprite];
+            if (ModeGoalTo(pBot, ps, f.x, f.y, f.sectnum, 5))
+                return true;
+        }
+        // half go for their flag, the others stay near home (by player number, so it doesn't flip)
+        if (theirs.nCarrier < 0 && theirs.nSprite >= 0 && ((nBot & 1) || BotRand(pBot, 100) < 30))
+        {
+            auto const &f = sprite[theirs.nSprite];
+            if (ModeGoalTo(pBot, ps, f.x, f.y, f.sectnum, 5))
+                return true;
+        }
+        if (Dist2D(ps->pos.x - mine.nHomeX, ps->pos.y - mine.nHomeY) > 3000 && BotRand(pBot, 100) < 50)
+        {
+            if (ModeGoalTo(pBot, ps, mine.nHomeX + BotRand(pBot, 1024) - 512, mine.nHomeY + BotRand(pBot, 1024) - 512, mine.nHomeSect, 4))
+                return true;
+        }
+        return false;
+    }
+    if (ModeActive(kBotModeHideSeek))
+    {
+        if (!IsSeeker(nBot))
+        {
+            // a hiding place: somewhere far from the seekers, then keep still
+            if (pBot->nGoalKind == 6)
+                return true;
+            int nBest = -1, nBestScore = -1;
+            for (int nTry = 0; nTry < 24; nTry++)
+            {
+                int const sct = BotRand(pBot, numsectors);
+                if (AreaSize(sct) < BigArea() || !FindPath(pBot, ps->cursectnum, sct))
+                    continue;
+                int nScore = INT32_MAX;
+                for (int TRAVERSE_CONNECT(p))
+                    if (IsSeeker(p))
+                        nScore = min(nScore, Dist2D(PlayerOf(p)->pos.x - sectCenterX[sct], PlayerOf(p)->pos.y - sectCenterY[sct]));
+                nScore = min(nScore, 20000) + BotRand(pBot, 3000);
+                if (nScore > nBestScore)
+                    nBestScore = nScore, nBest = sct;
+            }
+            if (nBest >= 0)
+            {
+                if (ModeGoalTo(pBot, ps, sectCenterX[nBest], sectCenterY[nBest], nBest, 6))
+                    return true;
+            }
+            return false;
+        }
+        if (nHideTic < kHideFreezeTics)
+            return true;  // waiting
+        // a seeker: go where a hider is (they hear them), now and then somewhere else
+        int nBest = -1, nBestDist = INT32_MAX;
+        for (int TRAVERSE_CONNECT(p))
+        {
+            if (IsSeeker(p) || !PlayerAlive(p))
+                continue;
+            int const d = Dist2D(PlayerOf(p)->pos.x - ps->pos.x, PlayerOf(p)->pos.y - ps->pos.y) + BotRand(pBot, 8000);
+            if (d < nBestDist)
+                nBestDist = d, nBest = p;
+        }
+        if (nBest >= 0 && BotRand(pBot, 100) < 75)
+        {
+            auto *po = PlayerOf(nBest);
+            if (ModeGoalTo(pBot, ps, po->pos.x + BotRand(pBot, 2048) - 1024, po->pos.y + BotRand(pBot, 2048) - 1024, po->cursectnum, 2))
+                return true;
+        }
+        return false;
+    }
+    if (ModeActive(kBotModeJuggernaut) && nJuggernaut >= 0 && nJuggernaut != nBot && PlayerAlive(nJuggernaut) && BotRand(pBot, 100) < 70 &&
+        FindPath(pBot, ps->cursectnum, PlayerOf(nJuggernaut)->cursectnum))
+    {
+        auto *pj = PlayerOf(nJuggernaut);
+        if (ModeGoalTo(pBot, ps, pj->pos.x, pj->pos.y, pj->cursectnum, 2))
+            return true;
+    }
+    return false;
 }
 
 bool PickItemGoal(int nBot, BOT *pBot)
@@ -741,6 +1382,8 @@ bool PickItemGoal(int nBot, BOT *pBot)
 void PickGoal(int nBot, BOT *pBot)
 {
     auto *ps = PlayerOf(nBot);
+    if (ModeActive(kBotModeSurvival) && ModeGoal(nBot, pBot))
+        return;
     // co-op: stay with the first player (you)
     if (CoopGame() && nBot != 0 && PlayerAlive(0))
     {
@@ -758,6 +1401,8 @@ void PickGoal(int nBot, BOT *pBot)
         pBot->nLastSeenSect = -1;
         return;
     }
+    if (ModeGoal(nBot, pBot))
+        return;
     // King of the Hill: the hill (health first when nearly dead)
     if (ModeActive(kBotModeHill) && nHillSect >= 0 && (sprite[ps->i].extra > 30 || BotRand(pBot, 100) < 50))
     {
@@ -780,7 +1425,7 @@ void PickGoal(int nBot, BOT *pBot)
         int nBest = -1, nBestDist = INT32_MAX;
         for (int TRAVERSE_CONNECT(p))
         {
-            if (p == nBot || !PlayerAlive(p) || (TeamGame() && PlayerTeam(p) == PlayerTeam(nBot)))
+            if (p == nBot || !PlayerAlive(p) || !IsEnemy(nBot, p))
                 continue;
             auto *po = PlayerOf(p);
             int const d = Dist2D(po->pos.x - ps->pos.x, po->pos.y - ps->pos.y) + BotRand(pBot, 6000);
@@ -1138,7 +1783,181 @@ void BotThink(int nBot)
     MakeInput(nBot, nForward, nStrafe, nBits);
 }
 
+// the match, from the host to everybody (PACKET_CHOSEN_MODE)
+void SendState(void)
+{
+    uint8_t buf[160];
+    int l = 0;
+    buf[l++] = PACKET_CHOSEN_MODE;
+    buf[l++] = nMode;
+    buf[l++] = (uint8_t)(int8_t)nJuggernaut;
+    buf[l++] = nHillSect & 255, buf[l++] = (nHillSect >> 8) & 255;
+    buf[l++] = nSeekers & 255, buf[l++] = nSeekers >> 8;
+    buf[l++] = min(nHideTic, 65535) & 255, buf[l++] = min(nHideTic, 65535) >> 8;
+    buf[l++] = teamScore[0], buf[l++] = teamScore[1];
+    buf[l++] = (uint8_t)(int8_t)flags[0].nCarrier, buf[l++] = (uint8_t)(int8_t)flags[1].nCarrier;
+    buf[l++] = flags[0].bHome | (flags[1].bHome << 1);
+    buf[l++] = nWave, buf[l++] = nWaveMonsters & 255, buf[l++] = nWaveMonsters >> 8, buf[l++] = bWaveRunning;
+    for (int p = 0; p < MAXPLAYERS; p++)
+    {
+        buf[l++] = gunLevel[p], buf[l++] = clamp(lives[p], 0, 255);
+        buf[l++] = hillPoints[p] & 255, buf[l++] = (hillPoints[p] >> 8) & 255;
+        buf[l++] = nDecorPic[p] & 255, buf[l++] = nDecorPic[p] >> 8;
+        buf[l++] = isBot[p];
+    }
+    Net_SendModeState(buf, l);
+}
+
 } // namespace
+
+static int nLoggedMode = -1;
+
+void botReceiveModeState(uint8_t const *buf, int nLength)
+{
+    if (nLength < 18 + MAXPLAYERS * 7)
+        return;
+    int l = 1;
+    nMode = clamp<int>(buf[l++], 0, kBotModeMax - 1);
+    nJuggernaut = (int8_t)buf[l++];
+    int const nHill = (int16_t)(buf[l] | (buf[l + 1] << 8));
+    l += 2;
+    if (nHill != nHillSect)
+        MarkHill(nHill);
+    nSeekers = buf[l] | (buf[l + 1] << 8), l += 2;
+    nHideTic = buf[l] | (buf[l + 1] << 8), l += 2;
+    teamScore[0] = buf[l++], teamScore[1] = buf[l++];
+    flags[0].nCarrier = (int8_t)buf[l++], flags[1].nCarrier = (int8_t)buf[l++];
+    flags[0].bHome = buf[l] & 1, flags[1].bHome = (buf[l] >> 1) & 1, l++;
+    nWave = buf[l++], nWaveMonsters = buf[l] | (buf[l + 1] << 8), l += 2, bWaveRunning = buf[l++];
+    for (int p = 0; p < MAXPLAYERS; p++)
+    {
+        gunLevel[p] = buf[l++], lives[p] = buf[l++];
+        hillPoints[p] = buf[l] | (buf[l + 1] << 8), l += 2;
+        nDecorPic[p] = buf[l] | (buf[l + 1] << 8), l += 2;
+        isBot[p] = buf[l++];  // a client knows which players are bots (the scores, the HUD)
+    }
+    if (!bFromHost || nMode != nLoggedMode)
+        LOG_F(INFO, "Match from the host: %s", botModeName(nMode));
+    nLoggedMode = nMode;
+    bFromHost = true;
+}
+
+int botModeRunning(void)
+{
+    if (!bActive && !g_netServer && !(g_netClient && bFromHost))
+        return -1;
+    return nMode;
+}
+
+// the look of the players: hiders are decorations, the juggernaut is bigger (after G_DoSpriteAnimations)
+void botDrawPlayers(void)
+{
+    int const nRunning = botModeRunning();
+    if (nRunning != kBotModeHideSeek && nRunning != kBotModeJuggernaut)
+        return;
+    for (int j = 0; j < spritesortcnt; j++)
+    {
+        auto *t = &tsprite[j];
+        if ((unsigned)t->owner >= MAXSPRITES)
+            continue;
+        auto const &spr = sprite[t->owner];
+        if (spr.picnum != APLAYER || (unsigned)spr.yvel >= MAXPLAYERS || !g_player[spr.yvel].ps || g_player[spr.yvel].ps->i != t->owner)
+            continue;
+        int const p = spr.yvel;
+        if (nRunning == kBotModeJuggernaut && p == nJuggernaut)
+            t->xrepeat = t->xrepeat * 5 / 4, t->yrepeat = t->yrepeat * 5 / 4;
+        if (nRunning == kBotModeHideSeek && !IsSeeker(p) && spr.extra > 0 && nDecorPic[p])
+        {
+            t->picnum = nDecorPic[p];
+            t->xrepeat = t->yrepeat = 32;
+            t->pal = 0;
+            t->shade = sector[t->sectnum].floorshade;
+            t->cstat &= ~(4 | 8 | 16 | 32);
+            t->xoffset = t->yoffset = 0;
+            t->z = sector[t->sectnum].floorz;
+        }
+    }
+}
+
+// a line at the top of the screen: how the match goes
+void botDrawHud(void)
+{
+    int const nRunning = botModeRunning();
+    if (nRunning <= kBotModeDukeMatch)
+        return;
+    int const me = myconnectindex;
+    char text[128] = "";
+    switch (nRunning)
+    {
+    case kBotModeGunGame:
+        Bsnprintf(text, sizeof(text), "GUN GAME: WEAPON %d OF %d", gunLevel[me] + 1, kGunGameSteps);
+        break;
+    case kBotModeHill:
+    {
+        int nLead = me;
+        for (int TRAVERSE_CONNECT(p))
+            if (hillPoints[p] > hillPoints[nLead])
+                nLead = p;
+        Bsnprintf(text, sizeof(text), "HILL: YOU %d  LEAD %s %d  (%d WINS)%s", hillPoints[me], g_player[nLead].user_name, hillPoints[nLead], kHillWin,
+                  (unsigned)g_player[me].ps->cursectnum < (unsigned)numsectors && inHill[g_player[me].ps->cursectnum] ? "  ON THE HILL" : "");
+        break;
+    }
+    case kBotModeLastMan:
+        Bsnprintf(text, sizeof(text), "LAST MAN STANDING: %d %s LEFT", lives[me], lives[me] == 1 ? "LIFE" : "LIVES");
+        break;
+    case kBotModeJuggernaut:
+        Bsnprintf(text, sizeof(text), "JUGGERNAUT: %s   YOUR POINTS %d OF %d", nJuggernaut == me ? "YOU!" : nJuggernaut >= 0 ? g_player[nJuggernaut].user_name : "-",
+                  hillPoints[me], kJuggernautWin);
+        break;
+    case kBotModeCaptureFlag:
+        Bsnprintf(text, sizeof(text), "BLUE %d - RED %d   BLUE FLAG %s  RED FLAG %s", teamScore[0], teamScore[1],
+                  flags[0].nCarrier >= 0 ? "TAKEN" : flags[0].bHome ? "HOME" : "DROPPED", flags[1].nCarrier >= 0 ? "TAKEN" : flags[1].bHome ? "HOME" : "DROPPED");
+        break;
+    case kBotModeHideSeek:
+    {
+        int nHiders = 0;
+        for (int TRAVERSE_CONNECT(p))
+            nHiders += !IsSeeker(p);
+        int const nLeft = max(0, (nHideTic < kHideFreezeTics ? kHideFreezeTics : kHideRoundTics) - nHideTic) / 30;
+        Bsnprintf(text, sizeof(text), "%s  HIDERS LEFT %d  %s %d:%02d", IsSeeker(me) ? "SEEKER" : "HIDER", nHiders,
+                  nHideTic < kHideFreezeTics ? "SEEKERS COME IN" : "TIME", nLeft / 60, nLeft % 60);
+        break;
+    }
+    case kBotModeSurvival:
+        if (bWaveRunning)
+            Bsnprintf(text, sizeof(text), "WAVE %d: %d MONSTERS LEFT   LIVES %d", nWave, nWaveMonsters, lives[me]);
+        else
+            Bsnprintf(text, sizeof(text), "SURVIVAL: WAVE %d IS COMING   LIVES %d", nWave + 1, lives[me]);
+        break;
+    }
+    if (text[0])
+        minitext(160 - (int)strlen(text) * 2, 30, text, 0, 2 + 8 + 16 + ROTATESPRITE_MAX);
+}
+
+// the game type a match type needs (survival: co-op, capture the flag: teams; the others: not co-op)
+void botFixGameType(int nMatch)
+{
+    auto findType = [](int nWant, int nNot) {
+        for (int i = 0; i < MAXGAMETYPES && g_gametypeNames[i][0]; i++)
+            if ((g_gametypeFlags[i] & nWant) == nWant && !(g_gametypeFlags[i] & nNot))
+                return i;
+        return -1;
+    };
+    int nType = -1;
+    if (nMatch == kBotModeSurvival && !(g_gametypeFlags[ud.m_coop] & GAMETYPE_COOP))
+        nType = findType(GAMETYPE_COOP, 0);
+    else if (nMatch == kBotModeCaptureFlag && !(g_gametypeFlags[ud.m_coop] & GAMETYPE_TDM))
+        nType = findType(GAMETYPE_TDM, GAMETYPE_COOP);
+    else if (nMatch != kBotModeSurvival && nMatch != kBotModeDukeMatch && (g_gametypeFlags[ud.m_coop] & GAMETYPE_COOP))
+        nType = findType(0, GAMETYPE_COOP);
+    if (nType >= 0)
+    {
+        ud.m_coop = nType;
+        LOG_F(INFO, "%s: game type %s", botModeName(nMatch), g_gametypeNames[nType]);
+    }
+    if (nMatch == kBotModeSurvival)
+        ud.m_monsters_off = 0;
+}
 
 // ---- the match ------------------------------------------------------------------------------------
 
@@ -1169,37 +1988,58 @@ const char *botModeName(int nMode)
 
 void botOnDeath(int nPlayer, int nKiller)
 {
-    if (!botMatchActive() || CoopGame())
+    if (!ModeAuthority() || (!bActive && !g_netServer) || (unsigned)nPlayer >= MAXPLAYERS)
         return;
-    if (nMode == kBotModeLastMan && lives[nPlayer] > 0)
+    bool const bByPlayer = nKiller >= 0 && nKiller < MAXPLAYERS && nKiller != nPlayer;
+    char buffer[96];
+    if ((ModeActive(kBotModeLastMan) || ModeActive(kBotModeSurvival)) && lives[nPlayer] > 0)
     {
         lives[nPlayer]--;
-        char buffer[96];
         if (lives[nPlayer] == 0)
-            Bsnprintf(buffer, sizeof(buffer), "%s is out", g_player[nPlayer].user_name);
+            Bsnprintf(buffer, sizeof(buffer), ModeActive(kBotModeSurvival) ? "%s is out until the next wave" : "%s is out", g_player[nPlayer].user_name);
         else
             Bsnprintf(buffer, sizeof(buffer), "%s has %d %s left", g_player[nPlayer].user_name, lives[nPlayer], lives[nPlayer] == 1 ? "life" : "lives");
         G_AddUserQuote(buffer), Net_BroadcastQuote(buffer);
     }
-    if (nMode == kBotModeGunGame && nKiller >= 0 && nKiller != nPlayer)
+    if (ModeActive(kBotModeGunGame) && bByPlayer)
     {
         if (gunLevel[nKiller] >= kGunGameSteps - 1)
         {
-            char buffer[96];
             Bsnprintf(buffer, sizeof(buffer), "%s wins the Gun Game!", g_player[nKiller].user_name);
             Announce(buffer);
             ResetMode();
         }
         else
-        {
             gunLevel[nKiller]++;
-            if (nKiller == 0)
+    }
+    if (ModeActive(kBotModeJuggernaut))
+    {
+        if (nPlayer == nJuggernaut)
+        {
+            if (bByPlayer)
             {
-                char buffer[64];
-                Bsnprintf(buffer, sizeof(buffer), "Gun Game: weapon %d of %d", gunLevel[0] + 1, kGunGameSteps);
-                G_AddUserQuote(buffer);
+                hillPoints[nKiller]++;
+                MakeJuggernaut(nKiller);
             }
+            else
+                nJuggernaut = -1;  // somebody else (ModeTick)
         }
+        else if (bByPlayer && nKiller == nJuggernaut)
+            hillPoints[nKiller]++;
+        if (bByPlayer && hillPoints[nKiller] >= kJuggernautWin)
+        {
+            Bsnprintf(buffer, sizeof(buffer), "%s wins the Juggernaut match!", g_player[nKiller].user_name);
+            Announce(buffer);
+            ResetMode();
+        }
+    }
+    if (ModeActive(kBotModeHideSeek) && !IsSeeker(nPlayer))
+    {
+        nSeekers |= 1 << nPlayer;  // found: a seeker now
+        if (bByPlayer)
+            hillPoints[nKiller]++;
+        Bsnprintf(buffer, sizeof(buffer), "%s was found!", g_player[nPlayer].user_name);
+        Announce(buffer);
     }
 }
 
@@ -1210,7 +2050,7 @@ const char *botSkillName(int nSkill)
 
 void botLevelStart(void)
 {
-    if (!botMatchActive())
+    if (!bActive && !g_netServer)
         return;
     LearnLevel();
     nItemsScanned = -1000;
@@ -1289,6 +2129,7 @@ void botStartMatch(void)
         ud.m_marker = 1;
     }
     nMode = clamp(gBotMode, 0, kBotModeMax - 1);
+    botFixGameType(nMode);
     LOG_F(INFO, "Bot match: %d bots (%s), %s, %s, E%dL%d", nBots, botSkillName(gBotSkill), botModeName(nMode), g_gametypeNames[ud.m_coop],
           ud.m_volume_number + 1, ud.m_level_number + 1);
     Menu_Change(MENU_CLOSE);
@@ -1298,6 +2139,8 @@ void botStartMatch(void)
 void botEndMatch(void)
 {
     nNetBots = 0;
+    bFromHost = false;
+    nMode = kBotModeDukeMatch;
     if (!bActive)
     {
         Bmemset(isBot, 0, sizeof(isBot));
@@ -1313,9 +2156,16 @@ void botEndMatch(void)
 
 void botThinkAll(void)
 {
-    if (!botMatchActive() || numsectors <= 0 || !(g_player[myconnectindex].ps->gm & MODE_GAME))
+    if ((!bActive && !g_netServer && !g_netClient) || numsectors <= 0 || !(g_player[myconnectindex].ps->gm & MODE_GAME))
         return;
     nTic++;
+    if (g_netClient)
+    {
+        // the host runs the match: here only the rules for this player
+        if (bFromHost)
+            ModeTick();
+        return;
+    }
     int const nId = numsectors * 7919 + numwalls;
     if (nId != nLevelId)
     {
@@ -1358,6 +2208,25 @@ void botThinkAll(void)
 
     // DUKE3D_BOT_DEBUG=1: what every bot does, every 5 seconds
     static int const bDebug = getenv("DUKE3D_BOT_DEBUG") ? 1 : 0;
+    if (bDebug && nTic % 150 == 0 && ModeActive(kBotModeCaptureFlag))
+        for (int t = 0; t < 2; t++)
+        {
+            FLAG const &f = flags[t];
+            int const c = f.nCarrier;
+            int const nOwn = c >= 0 ? FlagOfTeam(PlayerTeam(c)) : 0;
+            LOG_F(INFO, "flag %d: home %d carrier %d%s%s dist to their home %d (z %d vs %d, sect %d)", t, f.bHome, c, c >= 0 ? " team " : "",
+                  c >= 0 ? (nOwn ? "red" : "blue") : "", c >= 0 ? Dist2D(PlayerOf(c)->pos.x - flags[nOwn].nHomeX, PlayerOf(c)->pos.y - flags[nOwn].nHomeY) : -1,
+                  c >= 0 ? PlayerOf(c)->pos.z >> 8 : 0, flags[nOwn].nHomeZ >> 8, c >= 0 ? PlayerOf(c)->cursectnum : -1);
+            if (c >= 0)
+            {
+                BOT const *pb = &bots[c];
+                char line[512];
+                int n = Bsnprintf(line, sizeof(line), "carrier path (%d, at %d):", pb->nPath, pb->nPathPos);
+                for (int k = 0; k < pb->nPath && n < 480; k++)
+                    n += Bsnprintf(line + n, sizeof(line) - n, " %d(lo%d hi%d)", pb->path[k], sector[pb->path[k]].lotag, sector[pb->path[k]].hitag);
+                LOG_F(INFO, "%s", line);
+            }
+        }
     if (bDebug && nTic % 150 == 0)
         for (int TRAVERSE_CONNECT(i))
         {

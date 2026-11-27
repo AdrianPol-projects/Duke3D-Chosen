@@ -342,6 +342,7 @@ bool chosenHostGame(bool bOnline)
     bAdvertising = true;
 
     Menu_Change(MENU_CLOSE);
+    botFixGameType(gBotMode);  // the match type's game type (co-op for survival, teams for the flags)
     Net_FillNewGame(&pendingnewgame, 1);
     Net_StartNewGame();
     Net_SendNewGame(1, NULL);
@@ -886,7 +887,8 @@ bool chosenCommandLine(const char *pzOption, const char *pzValue)
             gBotNetCount = clamp(atoi(pzValue), 0, kBotMaxBots);
         return true;
     }
-    if (!Bstrcasecmp(pzOption, "bot-mode"))  // 0 DukeMatch, 1 Gun Game, 2 King of the Hill, 3 Last Man Standing
+    if (!Bstrcasecmp(pzOption, "bot-mode"))  // 0 DukeMatch, 1 Gun Game, 2 King of the Hill, 3 Last Man Standing, 4 Juggernaut,
+                                              // 5 Capture the Flag, 6 Hide and Seek, 7 Survival (bot matches and hosted games)
     {
         if (pzValue)
             gBotMode = clamp(atoi(pzValue), 0, kBotModeMax - 1);

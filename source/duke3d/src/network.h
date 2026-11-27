@@ -34,7 +34,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "enet.h"
 
 // net packet specification/compatibility version
-#define NETVERSION    1
+#define NETVERSION    2  // Duke3D Chosen 1.2: PACKET_CHOSEN_MODE
 
 extern ENetHost       *g_netClient;
 extern ENetHost       *g_netServer;
@@ -73,6 +73,7 @@ enum DukePacket_t
     PACKET_PLAYER_PING,
     PACKET_PLAYER_READY,
     PACKET_WORLD_UPDATE, //[75]
+    PACKET_CHOSEN_MODE,  // Duke3D Chosen: the match (scores, the juggernaut, the flags...), host to everybody
 
     // any packet with an ID higher than PACKET_BROADCAST is rebroadcast by server
     // so hacked clients can't create fake server packets and get the server to
@@ -254,6 +255,7 @@ int32_t Net_AddBot(char const *pzName, int32_t nColor, int32_t nTeam);
 void    Net_SendBotInfo(int32_t botIndex);
 void    Net_RemoveBot(int32_t botIndex);
 void    Net_BroadcastQuote(char const *pzText);
+void    Net_SendModeState(uint8_t const *pBuf, int32_t nLength);
 
 void    Net_SendUserMapName(void);
 

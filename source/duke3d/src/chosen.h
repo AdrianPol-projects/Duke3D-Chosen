@@ -20,7 +20,7 @@ See the GNU General Public License for more details.
 #pragma once
 
 #define CHOSEN_NAME "Duke3D Chosen"
-#define CHOSEN_VERSION "1.1"
+#define CHOSEN_VERSION "1.2"
 
 // the public server MULTIPLAYER > ONLINE uses when SERVER is left empty (its page: live games and
 // the web version)

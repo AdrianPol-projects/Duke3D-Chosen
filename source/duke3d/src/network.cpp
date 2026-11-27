@@ -1843,6 +1843,12 @@ void Net_BroadcastQuote(char const *pzText)
     enet_host_broadcast(g_netServer, CHAN_CHAT, enet_packet_create(&tempnetbuf[0], n + 3, ENET_PACKET_FLAG_RELIABLE));
 }
 
+void Net_SendModeState(uint8_t const *pBuf, int32_t nLength)
+{
+    if (g_netServer)
+        enet_host_broadcast(g_netServer, CHAN_GAMESTATE, enet_packet_create((void *)pBuf, nLength, ENET_PACKET_FLAG_RELIABLE));
+}
+
 // a bot leaves (to make room for a player): like a player disconnecting
 void Net_RemoveBot(int32_t botIndex)
 {
@@ -2503,6 +2509,10 @@ static void Net_ParseServerPacket(ENetEvent *event)
 
     case PACKET_NEW_GAME:
         Net_ReceiveNewGame(event);
+        break;
+
+    case PACKET_CHOSEN_MODE:
+        botReceiveModeState(event->packet->data, event->packet->dataLength);
         break;
 
     case PACKET_ACK:

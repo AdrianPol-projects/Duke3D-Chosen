@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "compat.h"
 #include "demo.h"
 #include "duke3d.h"
+#include "dukebots.h"
 #include "input.h"
 #include "mdsprite.h"
 #include "microprofile.h"
@@ -1163,6 +1164,7 @@ void G_DisplayRest(int32_t smoothratio)
 #endif
 
     G_PrintGameQuotes(screenpeek);
+    botDrawHud();  // Duke3D Chosen: how the match goes
 
     if (ud.show_level_text && hud_showmapname && g_levelTextTime > 1)
     {
