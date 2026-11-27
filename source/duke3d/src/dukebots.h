@@ -22,7 +22,18 @@ enum
     kBotSkillMax = 4,     // easy, normal, hard, insane
 };
 
+// match types on top of DukeMatch (bot matches)
+enum
+{
+    kBotModeDukeMatch = 0,
+    kBotModeGunGame,      // every kill: the next weapon; a kill with the last (the boot) wins
+    kBotModeHill,         // a point a second for whoever holds the hill alone; 60 win
+    kBotModeLastMan,      // 3 lives each; the last one left wins
+    kBotModeMax,
+};
+
 extern int32_t gBotCount;   // PLAY WITH BOTS: how many bots
+extern int32_t gBotMode;    // kBotMode...
 extern int32_t gBotSkill;   // 0..kBotSkillMax-1
 
 // a bot match is running (the players after the first are bots)
@@ -40,3 +51,7 @@ void botThinkAll(void);
 void botLevelStart(void);
 
 const char *botSkillName(int nSkill);
+const char *botModeName(int nMode);
+
+// a player died in a bot match (nKiller: the player who killed them, -1: anything else)
+void botOnDeath(int nPlayer, int nKiller);

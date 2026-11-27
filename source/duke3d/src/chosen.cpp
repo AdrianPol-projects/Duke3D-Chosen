@@ -872,6 +872,12 @@ bool chosenCommandLine(const char *pzOption, const char *pzValue)
         nCommandLineAction = 3;
         return true;
     }
+    if (!Bstrcasecmp(pzOption, "bot-mode"))  // 0 DukeMatch, 1 Gun Game, 2 King of the Hill, 3 Last Man Standing
+    {
+        if (pzValue)
+            gBotMode = clamp(atoi(pzValue), 0, kBotModeMax - 1);
+        return true;
+    }
     if (!Bstrcasecmp(pzOption, "bot-skill"))
     {
         if (pzValue)

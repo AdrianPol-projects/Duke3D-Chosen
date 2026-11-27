@@ -28,6 +28,7 @@ See the GNU General Public License for more details.
 
 int32_t gBotCount = 3;
 int32_t gBotSkill = 1;
+int32_t gBotMode = kBotModeDukeMatch;
 
 namespace {
 
@@ -335,9 +336,19 @@ int FindBreakable(BOT *pBot, DukePlayer_t *ps)
 // ---- items --------------------------------------------------------------------------------------
 
 // how much a bot wants this item now (0: not at all)
+bool ModeActive(int nWhich);
+
 int ItemValue(DukePlayer_t *ps, int nSprite)
 {
     auto const &s = sprite[nSprite];
+    if (ModeActive(kBotModeGunGame))
+    {
+        switch (tileGetMapping(s.picnum))
+        {
+        case COLA__: case SIXPAK__: case FIRSTAID__: case ATOMICHEALTH__: case SHIELD__: break;
+        default: return 0;  // weapons and ammo come with the kills
+        }
+    }
     if (s.statnum == MAXSTATUS || (s.cstat & 32768) || s.xrepeat == 0)
         return 0;
     int const nHealth = sprite[ps->i].extra;
@@ -533,6 +544,162 @@ int FindTarget(int nBot, BOT *pBot)
     return nBest;
 }
 
+// ---- match types --------------------------------------------------------------------------------
+
+const char *const kModeNames[kBotModeMax] = { "DukeMatch", "Gun Game", "King of the Hill", "Last Man Standing" };
+int const kGunGameOrder[] = { PISTOL_WEAPON, SHOTGUN_WEAPON, CHAINGUN_WEAPON, FREEZE_WEAPON, RPG_WEAPON, DEVISTATOR_WEAPON, SHRINKER_WEAPON, KNEE_WEAPON };
+int const kGunGameSteps = ARRAY_SIZE(kGunGameOrder);
+int const kLives = 3;
+int const kHillWin = 60;
+
+int nMode;                       // the match type of the running match (co-op: always DukeMatch rules)
+int gunLevel[MAXPLAYERS];
+int lives[MAXPLAYERS];
+int hillPoints[MAXPLAYERS];
+int nHillSect = -1;
+uint8_t inHill[MAXSECTORS];
+int nHillTic;
+
+bool ModeActive(int nWhich)
+{
+    return nMode == nWhich && !CoopGame();
+}
+
+void Announce(const char *pzText)
+{
+    G_AddUserQuote(pzText);
+    LOG_F(INFO, "Bot match: %s", pzText);
+}
+
+bool PlayerOut(int nPlayer)
+{
+    return ModeActive(kBotModeLastMan) && lives[nPlayer] <= 0;
+}
+
+// a hill: a big sector most of the level can walk to, and the sectors around it
+void PickHill(void)
+{
+    Bmemset(inHill, 0, sizeof(inHill));
+    nHillSect = -1;
+    int nBest = -1;
+    int64_t nBestScore = -1;
+    for (int nTry = 0; nTry < 60; nTry++)
+    {
+        int const s = (int)((nTic * 7919u + nTry * 104729u) % (unsigned)max<int>(numsectors, 1));
+        if ((sector[s].lotag & 0x7fff) == ST_2_UNDERWATER || sector[s].floorz - sector[s].ceilingz < (40 << 8))
+            continue;
+        if (AreaSize(s) < numsectors / 3)
+            continue;  // in the big connected part of the level (not a closed roof)
+        int minx = INT32_MAX, maxx = INT32_MIN, miny = INT32_MAX, maxy = INT32_MIN;
+        for (int w = sector[s].wallptr, e = w + sector[s].wallnum; w < e; w++)
+            minx = min<int>(minx, wall[w].x), maxx = max<int>(maxx, wall[w].x), miny = min<int>(miny, wall[w].y), maxy = max<int>(maxy, wall[w].y);
+        int64_t const area = (int64_t)(maxx - minx) * (maxy - miny);
+        if (area > nBestScore && area < (int64_t)8192 * 8192)
+            nBestScore = area, nBest = s;
+    }
+    if (nBest < 0)
+        nBest = PlayerOf(0)->cursectnum;
+    nHillSect = nBest;
+    inHill[nBest] = 1;
+    for (int w = sector[nBest].wallptr, e = w + sector[nBest].wallnum; w < e; w++)
+        if (wall[w].nextsector >= 0 && Passable(w))
+            inHill[wall[w].nextsector] = 1;
+    LOG_F(INFO, "Bot match: the hill is sector %d", nBest);
+}
+
+void ResetMode(void)
+{
+    for (int i = 0; i < MAXPLAYERS; i++)
+        gunLevel[i] = 0, lives[i] = kLives, hillPoints[i] = 0;
+    if (ModeActive(kBotModeHill))
+        PickHill();
+}
+
+void ModeTick(void)
+{
+    if (CoopGame())
+        return;
+    if (nMode == kBotModeGunGame)
+    {
+        // everybody has the weapon of their step (and the boot), nothing else
+        for (int TRAVERSE_CONNECT(p))
+        {
+            auto *ps = PlayerOf(p);
+            if (!PlayerAlive(p))
+                continue;
+            int const w = kGunGameOrder[clamp(gunLevel[p], 0, kGunGameSteps - 1)];
+            ps->gotweapon &= (1 << KNEE_WEAPON) | (1 << w);
+            if (w != KNEE_WEAPON)
+            {
+                if (!(ps->gotweapon & (1 << w)))
+                    P_AddWeapon(ps, w, 1);
+                ps->ammo_amount[w] = max<int>(ps->ammo_amount[w], ps->max_ammo_amount[w] / 2);
+            }
+            if (!(ps->gotweapon & (1 << ps->curr_weapon)) && !ps->reloading)
+                P_AddWeapon(ps, w, 1);
+        }
+    }
+    else if (nMode == kBotModeHill && nHillSect >= 0 && ++nHillTic >= 30)
+    {
+        nHillTic = 0;
+        int nHolder = -1, nCount = 0;
+        for (int TRAVERSE_CONNECT(p))
+            if (PlayerAlive(p) && (unsigned)PlayerOf(p)->cursectnum < (unsigned)numsectors && inHill[PlayerOf(p)->cursectnum])
+            {
+                if (nCount == 0 || !(TeamGame() && PlayerTeam(p) == PlayerTeam(nHolder)))
+                    nCount++;
+                nHolder = p;
+            }
+        if (nCount == 1)
+        {
+            int const nPoints = ++hillPoints[nHolder];
+            if (nPoints >= kHillWin)
+            {
+                char buffer[96];
+                Bsnprintf(buffer, sizeof(buffer), "%s is the King of the Hill!", g_player[nHolder].user_name);
+                Announce(buffer);
+                ResetMode();  // a new hill, everybody from zero
+            }
+            else if (nHolder == 0 && nPoints % 10 == 0)
+            {
+                char buffer[64];
+                Bsnprintf(buffer, sizeof(buffer), "You hold the hill: %d of %d", nPoints, kHillWin);
+                G_AddUserQuote(buffer);
+            }
+        }
+        // now and then: who leads
+        if (nTic % (30 * 15) < 30)
+        {
+            int nLead = 0;
+            for (int TRAVERSE_CONNECT(p))
+                if (hillPoints[p] > hillPoints[nLead])
+                    nLead = p;
+            char buffer[96];
+            Bsnprintf(buffer, sizeof(buffer), "Hill: %s leads with %d of %d", g_player[nLead].user_name, hillPoints[nLead], kHillWin);
+            G_AddUserQuote(buffer);
+        }
+    }
+    else if (nMode == kBotModeLastMan)
+    {
+        // who is out stays down (no USE to come back)
+        int nIn = 0, nLast = -1;
+        for (int TRAVERSE_CONNECT(p))
+        {
+            if (lives[p] > 0)
+                nIn++, nLast = p;
+            else
+                inputfifo[0][p].bits &= ~(1u << SK_OPEN);
+        }
+        if (nIn <= 1)
+        {
+            char buffer[96];
+            Bsnprintf(buffer, sizeof(buffer), "%s is the last man standing!", nLast >= 0 ? g_player[nLast].user_name : "Nobody");
+            Announce(buffer);
+            ResetMode();  // everybody gets their lives back and comes back
+        }
+    }
+}
+
 // ---- goals ----------------------------------------------------------------------------------------
 
 void SetGoal(BOT *pBot, int x, int y, int nSect, int nKind, int nItem = -1)
@@ -584,6 +751,17 @@ void PickGoal(int nBot, BOT *pBot)
     {
         SetGoal(pBot, pBot->nLastSeenX, pBot->nLastSeenY, pBot->nLastSeenSect, 2);
         pBot->nLastSeenSect = -1;
+        return;
+    }
+    // King of the Hill: the hill (health first when nearly dead)
+    if (ModeActive(kBotModeHill) && nHillSect >= 0 && (sprite[ps->i].extra > 30 || BotRand(pBot, 100) < 50))
+    {
+        // somewhere on the hill: its middle or a sector around it
+        int nSect = nHillSect;
+        for (int w = sector[nHillSect].wallptr, e = w + sector[nHillSect].wallnum, n = 0; w < e; w++)
+            if (wall[w].nextsector >= 0 && inHill[wall[w].nextsector] && BotRand(pBot, ++n + 1) == 0)
+                nSect = wall[w].nextsector;
+        SetGoal(pBot, sectCenterX[nSect] + BotRand(pBot, 512) - 256, sectCenterY[nSect] + BotRand(pBot, 512) - 256, nSect, 4);
         return;
     }
     // something it needs badly (a better weapon, health when hurt) comes first
@@ -693,7 +871,7 @@ void BotThink(int nBot)
     {
         pBot->nTarget = -1;
         pBot->nPath = 0;
-        uint32_t nBits = (nTic - pBot->nRespawnTime) % 16 < 4 ? (1u << SK_OPEN) : 0;
+        uint32_t nBits = (nTic - pBot->nRespawnTime) % 16 < 4 && !PlayerOut(nBot) ? (1u << SK_OPEN) : 0;
         if (nTic - pBot->nRespawnTime > 64)
             pBot->nRespawnTime = nTic;
         MakeInput(nBot, 0, 0, nBits);
@@ -969,6 +1147,47 @@ bool botIsBot(int nPlayer)
     return bActive && nPlayer > 0 && nPlayer < ud.multimode;
 }
 
+const char *botModeName(int nMode)
+{
+    return kModeNames[clamp(nMode, 0, kBotModeMax - 1)];
+}
+
+void botOnDeath(int nPlayer, int nKiller)
+{
+    if (!bActive || CoopGame())
+        return;
+    if (nMode == kBotModeLastMan && lives[nPlayer] > 0)
+    {
+        lives[nPlayer]--;
+        char buffer[96];
+        if (lives[nPlayer] == 0)
+            Bsnprintf(buffer, sizeof(buffer), "%s is out", g_player[nPlayer].user_name);
+        else
+            Bsnprintf(buffer, sizeof(buffer), "%s has %d %s left", g_player[nPlayer].user_name, lives[nPlayer], lives[nPlayer] == 1 ? "life" : "lives");
+        G_AddUserQuote(buffer);
+    }
+    if (nMode == kBotModeGunGame && nKiller >= 0 && nKiller != nPlayer)
+    {
+        if (gunLevel[nKiller] >= kGunGameSteps - 1)
+        {
+            char buffer[96];
+            Bsnprintf(buffer, sizeof(buffer), "%s wins the Gun Game!", g_player[nKiller].user_name);
+            Announce(buffer);
+            ResetMode();
+        }
+        else
+        {
+            gunLevel[nKiller]++;
+            if (nKiller == 0)
+            {
+                char buffer[64];
+                Bsnprintf(buffer, sizeof(buffer), "Gun Game: weapon %d of %d", gunLevel[0] + 1, kGunGameSteps);
+                G_AddUserQuote(buffer);
+            }
+        }
+    }
+}
+
 const char *botSkillName(int nSkill)
 {
     return kSkills[clamp(nSkill, 0, kBotSkillMax - 1)].pzName;
@@ -1032,7 +1251,8 @@ void botStartMatch(void)
         ud.m_respawn_items = ud.m_respawn_inventory = 1;
         ud.m_marker = 1;
     }
-    LOG_F(INFO, "Bot match: %d bots (%s), %s, E%dL%d", nBots, botSkillName(gBotSkill), g_gametypeNames[ud.m_coop],
+    nMode = clamp(gBotMode, 0, kBotModeMax - 1);
+    LOG_F(INFO, "Bot match: %d bots (%s), %s, %s, E%dL%d", nBots, botSkillName(gBotSkill), botModeName(nMode), g_gametypeNames[ud.m_coop],
           ud.m_volume_number + 1, ud.m_level_number + 1);
     Menu_Change(MENU_CLOSE);
     G_NewGame_EnterLevel();
@@ -1059,6 +1279,7 @@ void botThinkAll(void)
     {
         nLevelId = nId;
         botLevelStart();
+        ResetMode();
         if (getenv("DUKE3D_BOT_DEBUG"))
             for (int i = 0; i < ud.multimode; i++)
             {
@@ -1073,6 +1294,7 @@ void botThinkAll(void)
         ScanItems();
     for (int i = 1; i < ud.multimode; i++)
         BotThink(i);
+    ModeTick();
 
     // DUKE3D_BOT_DEBUG=1: what every bot does, every 5 seconds
     static int const bDebug = getenv("DUKE3D_BOT_DEBUG") ? 1 : 0;
@@ -1105,5 +1327,13 @@ void botThinkAll(void)
             Bsnprintf(buffer + n, sizeof(buffer) - n, " | monsters killed %d/%d", nKilled, g_player[0].ps->max_actors_killed);
         }
         LOG_F(INFO, "%s", buffer);
+        if (ModeActive(kBotModeHill) || ModeActive(kBotModeLastMan) || ModeActive(kBotModeGunGame))
+        {
+            int n2 = Bsnprintf(buffer, sizeof(buffer), "Bot match %s:", botModeName(nMode));
+            for (int TRAVERSE_CONNECT(p))
+                n2 += Bsnprintf(buffer + n2, sizeof(buffer) - n2, " %s %d", g_player[p].user_name,
+                                nMode == kBotModeHill ? hillPoints[p] : nMode == kBotModeLastMan ? lives[p] : gunLevel[p] + 1);
+            LOG_F(INFO, "%s", buffer);
+        }
     }
 }

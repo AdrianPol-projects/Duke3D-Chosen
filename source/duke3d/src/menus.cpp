@@ -1538,6 +1538,10 @@ static char const *MEOSN_CHOSEN_BOTSKILL[] = { "Easy", "Normal", "Hard", "Insane
 static MenuOptionSet_t MEOS_CHOSEN_BOTSKILL = MAKE_MENUOPTIONSET( MEOSN_CHOSEN_BOTSKILL, NULL, 0x3 );
 static MenuOption_t MEO_CHOSEN_BOTSKILL = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_CHOSEN_BOTSKILL, &gBotSkill );
 static MenuEntry_t ME_CHOSEN_BOTSKILL = MAKE_MENUENTRY( "Difficulty", &MF_Redfont, &MEF_ChosenBots, &MEO_CHOSEN_BOTSKILL, Option );
+static char const *MEOSN_CHOSEN_BOTMODE[] = { "DukeMatch", "Gun Game", "King of the Hill", "Last Man Standing", };
+static MenuOptionSet_t MEOS_CHOSEN_BOTMODE = MAKE_MENUOPTIONSET( MEOSN_CHOSEN_BOTMODE, NULL, 0x3 );
+static MenuOption_t MEO_CHOSEN_BOTMODE = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_CHOSEN_BOTMODE, &gBotMode );
+static MenuEntry_t ME_CHOSEN_BOTMODE = MAKE_MENUENTRY( "Mode", &MF_Redfont, &MEF_ChosenBots, &MEO_CHOSEN_BOTMODE, Option );
 static MenuLink_t MEO_CHOSEN_BOTOPTIONS = { MENU_NETOPTIONS, MA_Advance, };
 static MenuEntry_t ME_CHOSEN_BOTOPTIONS = MAKE_MENUENTRY( "Game Options", &MF_Redfont, &MEF_ChosenBots, &MEO_CHOSEN_BOTOPTIONS, Link );
 static MenuEntry_t ME_CHOSEN_BOTSTART = MAKE_MENUENTRY( "Start Match", &MF_Redfont, &MEF_ChosenBots, &MEO_NULL, Link );
@@ -1545,6 +1549,7 @@ static MenuEntry_t ME_CHOSEN_BOTSTART = MAKE_MENUENTRY( "Start Match", &MF_Redfo
 static MenuEntry_t *MEL_CHOSEN_BOTS[] = {
     &ME_CHOSEN_BOTCOUNT,
     &ME_CHOSEN_BOTSKILL,
+    &ME_CHOSEN_BOTMODE,
     &ME_CHOSEN_BOTOPTIONS,
     &ME_CHOSEN_BOTSTART,
 };

@@ -20,6 +20,7 @@ Everybody in a network game needs **1.1**.
 
 
 ## New in 1.1
+- **Match types** for bot matches (MODE): **Gun Game** (every kill: the next weapon, the boot last; a boot kill wins), **King of the Hill** (a point a second for holding the hill alone, 60 win; the bots go for it) and **Last Man Standing** (3 lives each). DukeMatch and Team DukeMatch rules underneath.
 - **PLAY WITH BOTS** in MULTIPLAYER: up to 7 computer players, 4 difficulties, in DukeMatch, Team DukeMatch or co-op (GAME OPTIONS: game type, episode, level, monsters). Bots find their way through the level, open doors, ride lifts, pick up weapons, ammo and health, fight with the weapon that suits the distance and dodge; in co-op they fight the monsters and stay with you. A bot that respawns somewhere it can't get away from (a closed roof) respawns elsewhere.
 - **Public server duke3d.pi-mole.com**: leave SERVER empty in ONLINE and host or join right away; https://duke3d.pi-mole.com shows the games live and has the web version.
 - **JOIN DURING GAME** in ONLINE: who may join the game you host while it runs: **Anyone**, **Ask Me** (you see "NAME wants to join - Y: let in, N: no") or **Nobody** (the game is locked). Can be changed while you play.

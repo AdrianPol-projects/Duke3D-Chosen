@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "duke3d.h"
 #include "enet.h"
 #include "input.h"
+#include "dukebots.h"
 #include "savegame.h"
 
 #ifdef EDUKE32_OLD_ANDROID_PORT
@@ -4146,6 +4147,8 @@ void P_FragPlayer(int playerNum)
 
     if ((g_netServer || ud.multimode > 1) && (pSprite->pal != 1 || (pSprite->cstat & 32768)))
     {
+        botOnDeath(playerNum, pPlayer->frag_ps != playerNum ? pPlayer->frag_ps : -1);  // Duke3D Chosen: match types
+
         if (pPlayer->frag_ps != playerNum)
         {
             if (GTFLAGS(GAMETYPE_TDM) && g_player[pPlayer->frag_ps].ps->team == g_player[playerNum].ps->team)
