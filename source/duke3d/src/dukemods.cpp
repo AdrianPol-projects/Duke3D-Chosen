@@ -22,7 +22,7 @@ See the GNU General Public License for more details.
 # include <TargetConditionals.h>
 # include <mach-o/dyld.h>
 # include <spawn.h>
-#elif !defined __ANDROID__
+#elif !defined __ANDROID__ && !defined __EMSCRIPTEN__
 # include <spawn.h>
 # include <unistd.h>
 #endif
