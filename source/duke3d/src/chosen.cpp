@@ -22,6 +22,7 @@ See the GNU General Public License for more details.
 
 #include "duke3d.h"
 #include "chosen.h"
+#include "dukebots.h"
 #include "menus.h"
 #include "netrelay.h"
 #include "network.h"
@@ -313,6 +314,7 @@ static bool startServer(void)
 
 bool chosenHostGame(bool bOnline)
 {
+    botEndMatch();
     if (bOnline && !onlineHostLobby())
         return false;
     if (!startServer())
@@ -439,6 +441,7 @@ bool chosenJoinLobby(const char *pzLobby)
 
 void chosenLeaveGame(void)
 {
+    botEndMatch();
     if (g_netServer || g_netClient)
     {
         g_netDisconnect = 1;
@@ -845,7 +848,7 @@ static char zCommandLineLobby[25];
 
 bool chosenCommandLineTakesValue(const char *pzOption)
 {
-    return Bstrcasecmp(pzOption, "online-host") != 0;
+    return Bstrcasecmp(pzOption, "online-host") != 0;  // the rest take a value (-bots N, -bot-skill N, ...)
 }
 
 bool chosenCommandLine(const char *pzOption, const char *pzValue)
@@ -862,6 +865,45 @@ bool chosenCommandLine(const char *pzOption, const char *pzValue)
                 Bstrncpyz(o.pBuffer, pzValue, o.nSize);
             return true;
         }
+    if (!Bstrcasecmp(pzOption, "bots"))  // a bot match with that many bots (and the game options of the menu)
+    {
+        if (pzValue)
+            gBotCount = clamp(atoi(pzValue), 1, kBotMaxBots);
+        nCommandLineAction = 3;
+        return true;
+    }
+    if (!Bstrcasecmp(pzOption, "bot-skill"))
+    {
+        if (pzValue)
+            gBotSkill = clamp(atoi(pzValue), 0, kBotSkillMax - 1);
+        return true;
+    }
+    if (!Bstrcasecmp(pzOption, "bot-monsters"))  // 0: none, 1-4: their skill
+    {
+        if (pzValue)
+        {
+            int const n = clamp(atoi(pzValue), 0, 4);
+            ud.m_monsters_off = n == 0;
+            if (n)
+                ud.m_player_skill = n;
+        }
+        return true;
+    }
+    if (!Bstrcasecmp(pzOption, "bot-level"))  // E<episode>L<level> as two numbers: 12 = E1L2
+    {
+        if (pzValue && strlen(pzValue) >= 2)
+        {
+            ud.m_volume_number = clamp(pzValue[0] - '1', 0, MAXVOLUMES - 1);
+            ud.m_level_number = clamp(atoi(pzValue + 1) - 1, 0, MAXLEVELS - 1);
+        }
+        return true;
+    }
+    if (!Bstrcasecmp(pzOption, "bot-gametype"))  // the index in the game type list (0 DukeMatch, 1 co-op, ...)
+    {
+        if (pzValue)
+            ud.m_coop = clamp(atoi(pzValue), 0, MAXGAMETYPES - 1);
+        return true;
+    }
     if (!Bstrcasecmp(pzOption, "online-join-policy"))  // anyone | ask | nobody (or 0-2)
     {
         if (pzValue)
@@ -886,10 +928,29 @@ bool chosenCommandLine(const char *pzOption, const char *pzValue)
 // once the main menu is up: what the command line asked for
 void chosenCommandLineAction(void)
 {
+    // DUKE3D_START_MENU=<menu id>: opens that menu once the main menu is up (screenshots, tests)
+    static bool bStartMenu;
+    static uint32_t nStartMenuTime;
+    if (!nStartMenuTime)
+        nStartMenuTime = timerGetTicks() + 2000;
+    if (!bStartMenu && (g_player[myconnectindex].ps->gm & MODE_MENU) && (int32_t)(timerGetTicks() - nStartMenuTime) >= 0)
+    {
+        bStartMenu = true;
+        if (char const *pzMenu = getenv("DUKE3D_START_MENU"))
+        {
+            Menu_Change(atoi(pzMenu));
+            LOG_F(INFO, "Start menu %s: now %d", pzMenu, g_currentMenu);
+        }
+    }
     if (!nCommandLineAction || !(g_player[myconnectindex].ps->gm & MODE_MENU))
         return;
     int const nAction = nCommandLineAction;
     nCommandLineAction = 0;
+    if (nAction == 3)
+    {
+        botStartMatch();
+        return;
+    }
     bool const bOk = nAction == 1 ? chosenHostGame(true) : chosenJoinLobby(zCommandLineLobby);
     LOG_F(INFO, "Online (command line): %s - %s", nAction == 1 ? "host" : "join", bOk ? "ok" : onlineStatusText());
 }

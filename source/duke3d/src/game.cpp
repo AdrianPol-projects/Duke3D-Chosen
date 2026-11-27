@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "demo.h"
 #include "duke3d.h"
 #include "chosen.h"
+#include "dukebots.h"
 #include "input.h"
 #include "menus.h"
 #include "microprofile.h"
@@ -7335,6 +7336,8 @@ int G_DoMoveThings(void)
 
     if (g_netClient) // [75] The server should not overwrite its own randomseed
         randomseed = ticrandomseed;
+
+    botThinkAll();  // Duke3D Chosen: the bots' input for this tic
 
     for (bssize_t TRAVERSE_CONNECT(i))
         Bmemcpy(&g_player[i].input, &inputfifo[(g_netServer && myconnectindex == i)][i], sizeof(input_t));

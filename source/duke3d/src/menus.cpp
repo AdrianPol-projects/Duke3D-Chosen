@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "menus.h"
 #include "chosen.h"
+#include "dukebots.h"
 
 #include "al_midi.h"
 #include "cheats.h"
@@ -1510,6 +1511,8 @@ static MenuEntry_t *MEL_NETJOIN[] = {
 
 // Duke3D Chosen: MULTIPLAYER (chosen.cpp does the work)
 static bool s_chosenHostOnline;
+static bool s_chosenHostBots;  // the game options are for a bot match (PLAY WITH BOTS)
+MAKE_MENU_TOP_ENTRYLINK( "Play With Bots", MEF_CenterMenu, CHOSEN_BOTS, MENU_CHOSEN_BOTS );
 MAKE_MENU_TOP_ENTRYLINK( "Host LAN Game", MEF_CenterMenu, CHOSEN_HOSTLAN, MENU_NETOPTIONS );
 MAKE_MENU_TOP_ENTRYLINK( "Find LAN Games", MEF_CenterMenu, CHOSEN_FINDLAN, MENU_CHOSEN_LAN );
 MAKE_MENU_TOP_ENTRYLINK( "Join by Address", MEF_CenterMenu, CHOSEN_JOIN, MENU_NETJOIN );
@@ -1518,12 +1521,32 @@ MAKE_MENU_TOP_ENTRYLINK( "Player Setup", MEF_CenterMenu, CHOSEN_PLAYER, MENU_PLA
 static MenuEntry_t ME_CHOSEN_LEAVE = MAKE_MENUENTRY( "Leave Game", &MF_Redfont, &MEF_CenterMenu, &MEO_NULL, Link );
 
 static MenuEntry_t *MEL_CHOSEN_MP[] = {
+    &ME_CHOSEN_BOTS,
     &ME_CHOSEN_HOSTLAN,
     &ME_CHOSEN_FINDLAN,
     &ME_CHOSEN_JOIN,
     &ME_CHOSEN_ONLINE,
     &ME_CHOSEN_PLAYER,
     &ME_CHOSEN_LEAVE,
+};
+
+// PLAY WITH BOTS: how many, how good, the game options (game type, level, monsters), start
+static MenuRangeInt32_t MEO_CHOSEN_BOTCOUNT = MAKE_MENURANGE( &gBotCount, &MF_Bluefont, 1, kBotMaxBots, 0, kBotMaxBots, DisplayTypeInteger );
+static MenuEntryFormat_t MEF_ChosenBots = { 4<<16, 0, 112<<16 };
+static MenuEntry_t ME_CHOSEN_BOTCOUNT = MAKE_MENUENTRY( "Bots", &MF_Redfont, &MEF_ChosenBots, &MEO_CHOSEN_BOTCOUNT, RangeInt32 );
+static char const *MEOSN_CHOSEN_BOTSKILL[] = { "Easy", "Normal", "Hard", "Insane", };
+static MenuOptionSet_t MEOS_CHOSEN_BOTSKILL = MAKE_MENUOPTIONSET( MEOSN_CHOSEN_BOTSKILL, NULL, 0x3 );
+static MenuOption_t MEO_CHOSEN_BOTSKILL = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_CHOSEN_BOTSKILL, &gBotSkill );
+static MenuEntry_t ME_CHOSEN_BOTSKILL = MAKE_MENUENTRY( "Difficulty", &MF_Redfont, &MEF_ChosenBots, &MEO_CHOSEN_BOTSKILL, Option );
+static MenuLink_t MEO_CHOSEN_BOTOPTIONS = { MENU_NETOPTIONS, MA_Advance, };
+static MenuEntry_t ME_CHOSEN_BOTOPTIONS = MAKE_MENUENTRY( "Game Options", &MF_Redfont, &MEF_ChosenBots, &MEO_CHOSEN_BOTOPTIONS, Link );
+static MenuEntry_t ME_CHOSEN_BOTSTART = MAKE_MENUENTRY( "Start Match", &MF_Redfont, &MEF_ChosenBots, &MEO_NULL, Link );
+
+static MenuEntry_t *MEL_CHOSEN_BOTS[] = {
+    &ME_CHOSEN_BOTCOUNT,
+    &ME_CHOSEN_BOTSKILL,
+    &ME_CHOSEN_BOTOPTIONS,
+    &ME_CHOSEN_BOTSTART,
 };
 
 static MenuEntryFormat_t MEF_ChosenOnline = { 4<<16, 0, 112<<16 };
@@ -1654,6 +1677,7 @@ static MenuMenu_t M_NETOPTIONS = MAKE_MENUMENU( "Net Game Options", &MMF_NetSetu
 static MenuMenu_t M_NETJOIN = MAKE_MENUMENU( "Join by Address", &MMF_SmallOptionsNarrow, MEL_NETJOIN );
 static MenuMenuFormat_t MMF_ChosenList = { { MENU_MARGIN_CENTER<<16, 40<<16, }, 150<<16 };
 static MenuMenu_t M_CHOSEN_MP = MAKE_MENUMENU( "Multiplayer", &MMF_Top_Joystick_Network, MEL_CHOSEN_MP );
+static MenuMenu_t M_CHOSEN_BOTS = MAKE_MENUMENU( "Bots", &MMF_NetSetup, MEL_CHOSEN_BOTS );
 static MenuMenu_t M_CHOSEN_ONLINE = MAKE_MENUMENU( "Online", &MMF_NetSetup, MEL_CHOSEN_ONLINE );
 static MenuMenu_t M_CHOSEN_LOBBIES = MAKE_MENUMENU( "Lobbies", &MMF_ChosenList, MEL_CHOSEN_LIST );
 static MenuMenu_t M_CHOSEN_LAN = MAKE_MENUMENU( "LAN Games", &MMF_ChosenList, MEL_CHOSEN_LIST );
@@ -1807,6 +1831,7 @@ static Menu_t Menus[] = {
     { &M_CHOSEN_ONLINE, MENU_CHOSEN_ONLINE, MENU_CHOSEN_MP, MA_Return, Menu },
     { &M_CHOSEN_LOBBIES, MENU_CHOSEN_LOBBIES, MENU_CHOSEN_ONLINE, MA_Return, Menu },
     { &M_CHOSEN_LAN, MENU_CHOSEN_LAN, MENU_CHOSEN_MP, MA_Return, Menu },
+    { &M_CHOSEN_BOTS, MENU_CHOSEN_BOTS, MENU_CHOSEN_MP, MA_Return, Menu },
 };
 
 static CONSTEXPR const uint16_t numMenus = ARRAY_SIZE(Menus);
@@ -3932,6 +3957,7 @@ static void Menu_StartGameWithoutSkill(void)
     ud.m_respawn_items = 0;
     ud.m_respawn_inventory = 0;
 
+    botEndMatch();  // Duke3D Chosen: a new game is played alone
     ud.multimode = 1;
 
     G_NewGame_EnterLevel();
@@ -4089,6 +4115,7 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
         ud.m_respawn_items = 0;
         ud.m_respawn_inventory = 0;
 
+        botEndMatch();
         ud.multimode = 1;
 
         G_NewGame_EnterLevel();
@@ -4254,9 +4281,13 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
         Menu_Change(MENU_RESETSTATSVERIFY);
 #endif
     else if (entry == &ME_CHOSEN_HOSTLAN)
-        s_chosenHostOnline = false;
+        s_chosenHostOnline = s_chosenHostBots = false;
     else if (entry == &ME_CHOSEN_HOSTLOBBY)
-        s_chosenHostOnline = true;
+        s_chosenHostOnline = true, s_chosenHostBots = false;
+    else if (entry == &ME_CHOSEN_BOTOPTIONS)
+        s_chosenHostBots = true;
+    else if (entry == &ME_CHOSEN_BOTSTART)
+        botStartMatch();
     else if (entry == &ME_CHOSEN_FINDLAN || entry == &ME_CHOSEN_REFRESH && g_currentMenu == MENU_CHOSEN_LAN)
         Menu_ChosenFindLan();
     else if (entry == &ME_CHOSEN_FINDLOBBIES || entry == &ME_CHOSEN_REFRESH && g_currentMenu == MENU_CHOSEN_LOBBIES)
@@ -4289,6 +4320,8 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
         artClearMapArt();
         Menu_Change(MENU_MAIN);
     }
+    else if (entry == &ME_NETOPTIONS_ACCEPT && !g_netServer && !g_netClient && s_chosenHostBots)
+        botStartMatch();  // the game options of PLAY WITH BOTS
     else if (entry == &ME_NETOPTIONS_ACCEPT && !g_netServer && !g_netClient)
         chosenHostGame(s_chosenHostOnline);
     else if (entry == &ME_NETHOST_LAUNCH)
