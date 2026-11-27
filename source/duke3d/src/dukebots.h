@@ -44,6 +44,8 @@ bool botIsBot(int nPlayer);
 void botStartMatch(void);
 // back to playing alone (a new game, a network game, the title screen)
 void botEndMatch(void);
+// loading a saved bot game (co-op with bots, a bot match): the players it was saved with
+bool botPrepareLoad(int nPlayers);
 
 // every tic, before the players' input is used (G_DoMoveThings): the bots' input
 void botThinkAll(void);

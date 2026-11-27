@@ -23,6 +23,7 @@ See the GNU General Public License for more details.
 #include "duke3d.h"
 #include "chosen.h"
 #include "dukebots.h"
+#include "dukemods.h"
 #include "menus.h"
 #include "netrelay.h"
 #include "network.h"
@@ -948,6 +949,8 @@ void chosenCommandLineAction(void)
             LOG_F(INFO, "Start menu %s: now %d", pzMenu, g_currentMenu);
         }
     }
+    if (g_player[myconnectindex].ps->gm & MODE_MENU)
+        modStartupFinished();  // the game started fine (with its mod, if any)
     if (!nCommandLineAction || !(g_player[myconnectindex].ps->gm & MODE_MENU))
         return;
     int const nAction = nCommandLineAction;

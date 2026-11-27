@@ -23,6 +23,7 @@ See the GNU General Public License for more details.
 #include "duke3d.h"
 #include "dukebots.h"
 #include "cmdline.h"
+#include "savegame.h"
 
 #define NORMALKEYMOVE 40  // as in player.cpp: walking speed of a key press
 
@@ -1214,11 +1215,10 @@ void botLevelStart(void)
     }
 }
 
-void botStartMatch(void)
+// the players of a bot match: you and nBots bots (also for loading a saved bot game)
+static void SetupPlayers(int nBots)
 {
-    if (g_netServer || g_netClient)
-        return;
-    int const nBots = clamp(gBotCount, 1, kBotMaxBots);
+    nBots = clamp(nBots, 1, kBotMaxBots);
     bActive = true;
     ud.multimode = 1 + nBots;
     g_fakeMultiMode = ud.multimode;
@@ -1246,6 +1246,25 @@ void botStartMatch(void)
         g_player[i].pteam = i & 1;
         g_player[i].ps->team = i & 1;
     }
+}
+
+bool botPrepareLoad(int nPlayers)
+{
+    if (g_netServer || g_netClient || nPlayers < 2 || nPlayers > 1 + kBotMaxBots)
+        return false;
+    SetupPlayers(nPlayers - 1);
+    nMode = clamp(gBotMode, 0, kBotModeMax - 1);
+    nLevelId = -1;  // learn the level again after loading
+    LOG_F(INFO, "Bot match: loading a saved game with %d bots", nPlayers - 1);
+    return true;
+}
+
+void botStartMatch(void)
+{
+    if (g_netServer || g_netClient)
+        return;
+    int const nBots = clamp(gBotCount, 1, kBotMaxBots);
+    SetupPlayers(nBots);
     if (!(g_gametypeFlags[ud.m_coop] & GAMETYPE_COOP))
     {
         ud.m_respawn_items = ud.m_respawn_inventory = 1;
@@ -1295,6 +1314,23 @@ void botThinkAll(void)
     for (int i = 1; i < ud.multimode; i++)
         BotThink(i);
     ModeTick();
+
+    // DUKE3D_BOT_SAVETEST=1: saves at 10 s, drops the bots, loads the save at 12 s (a test of saved bot games)
+    static int const bSaveTest = getenv("DUKE3D_BOT_SAVETEST") ? 1 : 0;
+    static savebrief_t testSave("bot save test");
+    if (bSaveTest && nTic == 300)
+    {
+        int const r = G_SavePlayer(testSave, false);
+        LOG_F(INFO, "Bot save test: saved (%d) to %s, %d players", r, testSave.path, ud.multimode);
+    }
+    if (bSaveTest && nTic == 360)
+    {
+        int const nPlayers = ud.multimode;
+        botEndMatch();
+        LOG_F(INFO, "Bot save test: back to %d player(s), loading", ud.multimode);
+        int const r = G_LoadPlayer(testSave);
+        LOG_F(INFO, "Bot save test: loaded (%d): %d players (were %d), bots %s", r, ud.multimode, nPlayers, bActive ? "on" : "off");
+    }
 
     // DUKE3D_BOT_DEBUG=1: what every bot does, every 5 seconds
     static int const bDebug = getenv("DUKE3D_BOT_DEBUG") ? 1 : 0;

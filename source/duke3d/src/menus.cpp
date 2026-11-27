@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "menus.h"
 #include "chosen.h"
 #include "dukebots.h"
+#include "dukemods.h"
 
 #include "al_midi.h"
 #include "cheats.h"
@@ -361,6 +362,7 @@ MAKE_MENU_TOP_ENTRYLINK( s_SaveGame, MEF_MainMenu, MAIN_SAVEGAME, MENU_SAVE );
 MAKE_MENU_TOP_ENTRYLINK( s_LoadGame, MEF_MainMenu, MAIN_LOADGAME, MENU_LOAD );
 MAKE_MENU_TOP_ENTRYLINK( "Multiplayer", MEF_MainMenu, MAIN_MULTIPLAYER, MENU_CHOSEN_MP );
 MAKE_MENU_TOP_ENTRYLINK( s_Options, MEF_MainMenu, MAIN_OPTIONS, MENU_OPTIONS );
+MAKE_MENU_TOP_ENTRYLINK( "Mods", MEF_MainMenu, MAIN_MODS, MENU_CHOSEN_MODS );
 #ifdef EDUKE32_STANDALONE
 MAKE_MENU_TOP_ENTRYLINK( "Read me!", MEF_MainMenu, MAIN_HELP, MENU_STORY );
 #else
@@ -380,6 +382,7 @@ static MenuEntry_t *MEL_MAIN[] = {
     &ME_MAIN_MULTIPLAYER,
     &ME_MAIN_LOADGAME,
     &ME_MAIN_OPTIONS,
+    &ME_MAIN_MODS,
     &ME_MAIN_HELP,
 #ifndef EDUKE32_RETAIL_MENU
     &ME_MAIN_CREDITS,
@@ -1685,6 +1688,25 @@ static MenuMenu_t M_CHOSEN_MP = MAKE_MENUMENU( "Multiplayer", &MMF_Top_Joystick_
 static MenuMenu_t M_CHOSEN_BOTS = MAKE_MENUMENU( "Bots", &MMF_NetSetup, MEL_CHOSEN_BOTS );
 static MenuMenu_t M_CHOSEN_ONLINE = MAKE_MENUMENU( "Online", &MMF_NetSetup, MEL_CHOSEN_ONLINE );
 static MenuMenu_t M_CHOSEN_LOBBIES = MAKE_MENUMENU( "Lobbies", &MMF_ChosenList, MEL_CHOSEN_LIST );
+
+// MODS: the plain game and the mods in mods/ (dukemods.cpp); choosing one restarts the game
+static char s_modNames[kMaxModEntries][48];
+static int s_modCount;
+static MenuEntry_t ME_CHOSEN_MOD[kMaxModEntries];
+static MenuEntry_t *MEL_CHOSEN_MODS[kMaxModEntries];
+static MenuMenu_t M_CHOSEN_MODS = MAKE_MENUMENU( "Mods", &MMF_ChosenList, MEL_CHOSEN_MODS );
+
+static void Menu_ChosenModsScan(void)
+{
+    s_modCount = modScan();
+    for (int i = 0; i < kMaxModEntries; i++)
+    {
+        MODENTRY const *pMod = modEntry(i);
+        if (pMod)
+            Bsnprintf(s_modNames[i], sizeof(s_modNames[i]), "%s%s", pMod->szName, modIsActive(pMod) ? "  (on)" : "");
+        MenuEntry_HideOnCondition(&ME_CHOSEN_MOD[i], i >= s_modCount);
+    }
+}
 static MenuMenu_t M_CHOSEN_LAN = MAKE_MENUMENU( "LAN Games", &MMF_ChosenList, MEL_CHOSEN_LIST );
 
 #ifdef EDUKE32_RETAIL_MENU
@@ -1837,6 +1859,7 @@ static Menu_t Menus[] = {
     { &M_CHOSEN_LOBBIES, MENU_CHOSEN_LOBBIES, MENU_CHOSEN_ONLINE, MA_Return, Menu },
     { &M_CHOSEN_LAN, MENU_CHOSEN_LAN, MENU_CHOSEN_MP, MA_Return, Menu },
     { &M_CHOSEN_BOTS, MENU_CHOSEN_BOTS, MENU_CHOSEN_MP, MA_Return, Menu },
+    { &M_CHOSEN_MODS, MENU_CHOSEN_MODS, MENU_MAIN, MA_Return, Menu },
 };
 
 static CONSTEXPR const uint16_t numMenus = ARRAY_SIZE(Menus);
@@ -2143,6 +2166,13 @@ void Menu_Init(void)
         MEL_CHOSEN_LIST[i] = &ME_CHOSEN_LIST[i];
     }
     MEL_CHOSEN_LIST[kChosenListMax] = &ME_CHOSEN_REFRESH;
+    for (int i = 0; i < kMaxModEntries; i++)
+    {
+        ME_CHOSEN_MOD[i] = ME_CHOSEN_LISTTEMPLATE;
+        ME_CHOSEN_MOD[i].name = s_modNames[i];
+        ME_CHOSEN_MOD[i].flags |= MEF_Hidden;
+        MEL_CHOSEN_MODS[i] = &ME_CHOSEN_MOD[i];
+    }
 
     int32_t i, j, k;
     int32_t const *init_keybind_order = NULL;
@@ -4293,6 +4323,15 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
         s_chosenHostBots = true;
     else if (entry == &ME_CHOSEN_BOTSTART)
         botStartMatch();
+    else if (entry == &ME_MAIN_MODS)
+        Menu_ChosenModsScan();
+    else if (entry >= &ME_CHOSEN_MOD[0] && entry < &ME_CHOSEN_MOD[kMaxModEntries])
+    {
+        int const nMod = (int)(entry - &ME_CHOSEN_MOD[0]);
+        MODENTRY const *pMod = modEntry(nMod);
+        if (pMod && !modIsActive(pMod) && modSelect(nMod))
+            modRestart(pMod->szName);
+    }
     else if (entry == &ME_CHOSEN_FINDLAN || entry == &ME_CHOSEN_REFRESH && g_currentMenu == MENU_CHOSEN_LAN)
         Menu_ChosenFindLan();
     else if (entry == &ME_CHOSEN_FINDLOBBIES || entry == &ME_CHOSEN_REFRESH && g_currentMenu == MENU_CHOSEN_LOBBIES)
@@ -5345,6 +5384,9 @@ static void Menu_ValidateSelectionIsActive(Menu_t* m)
 
 static void Menu_AboutToStartDisplaying(Menu_t * m)
 {
+    if (m->menuID == MENU_CHOSEN_MODS)
+        Menu_ChosenModsScan();  // before the menu checks what can be selected
+
     switch (m->menuID)
     {
     case MENU_MAIN:
@@ -5530,6 +5572,7 @@ static void Menu_ChangingTo(Menu_t * m)
 {
     switch (m->menuID)
     {
+
     case MENU_USERMAP:
         // terrible hack
         if (g_previousMenu != MENU_SKILL && g_previousMenu != MENU_USERMAP)

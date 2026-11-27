@@ -33,6 +33,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "duke3d.h"
 #include "chosen.h"
 #include "dukebots.h"
+#include "dukemods.h"
+
+char const * const *g_chosenArgv;  // the command line, to start again with a mod (dukemods.cpp)
 #include "input.h"
 #include "menus.h"
 #include "microprofile.h"
@@ -6625,6 +6628,7 @@ static void G_ChooseGameDialog(int argc, char const * const * argv)
 
 int app_main(int argc, char const* const* argv)
 {
+    g_chosenArgv = argv;
 #ifdef _WIN32
 #ifndef DEBUGGINGAIDS
     if (!G_CheckCmdSwitch(argc, argv, "-noinstancechecking") && !windowsCheckAlreadyRunning())
@@ -6791,6 +6795,15 @@ int app_main(int argc, char const* const* argv)
     }
 #endif
 
+    {
+        // Duke3D Chosen: the mod chosen in MODS (unless the command line picks game files itself)
+        bool bFiles = false;
+        for (int i = 1; i < argc; i++)
+            for (char const *sw : { "-g", "-j", "-grp", "-gamegrp", "-game_dir", "-x", "-h", "-mx", "-mh" })
+                if (!Bstrncasecmp(argv[i], sw, Bstrlen(sw)))
+                    bFiles = true;
+        modApplySelection(bFiles);
+    }
     G_LoadGroups(!g_noAutoLoad && !ud.setup.noautoload);
 
     if (!g_useCwd)

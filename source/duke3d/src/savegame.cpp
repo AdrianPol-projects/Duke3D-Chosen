@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "savegame.h"
 
 #include "vfs.h"
+#include "dukebots.h"
 
 static OutputFileCounter savecounter;
 
@@ -692,6 +693,10 @@ int32_t G_LoadPlayer(savebrief_t & sv)
 
     savehead_t h;
     int status = sv_loadheader(fil, 0, &h);
+
+    // Duke3D Chosen: a game saved with bots (co-op, a bot match) brings its bots back
+    if (status >= 0 && h.numplayers != ud.multimode && h.numplayers > 1)
+        botPrepareLoad(h.numplayers);
 
     if (status < 0 || h.numplayers != ud.multimode)
     {

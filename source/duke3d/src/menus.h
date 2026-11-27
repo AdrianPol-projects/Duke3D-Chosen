@@ -128,6 +128,7 @@ enum MenuIndex_t {
     MENU_CHOSEN_LOBBIES = 20032,
     MENU_CHOSEN_LAN     = 20033,
     MENU_CHOSEN_BOTS    = 20034,
+    MENU_CHOSEN_MODS    = 20035,
 };
 
 

@@ -13,6 +13,8 @@ Unzip, put your `DUKE3D.GRP` next to the game and start it. Any Duke Nukem 3D wo
   * **FIND LAN GAMES**: lists the games on your network; pick one to join. **JOIN BY ADDRESS** for anything else.
   * **ONLINE**: enter your server's address and key, then **HOST A LOBBY** or **FIND LOBBIES**. No port forwarding: the game traffic goes through a relay server: the public one, duke3d.pi-mole.com (leave SERVER empty), or your own ([SERVER.md](SERVER.md)). Lobbies can have a password.
   * **LEAVE GAME**, and QUIT TO TITLE now works in network games.
+* **MODS** in the main menu: the mods in the `mods` folder (folders, .zip, .grp, .pk3), loaded at the next start.
+* **Saved games with bots** (co-op, bot matches) load with their bots.
 * **Live dashboard** in the browser: lobbies, players' health, armor, weapons, keys, a live level map and an event list.
 * **Network game fix:** in EDuke32's current network code the clients never got the level (`Waiting for server` forever). Fixed, so LAN and online games work.
 * **Touch devices** (Android, iPad, phones and tablets in the browser): on-screen stick, finger look, fire/jump/duck/use buttons, a weapon picker, gyro aiming, a layout editor; the buttons hide while a controller is connected.
